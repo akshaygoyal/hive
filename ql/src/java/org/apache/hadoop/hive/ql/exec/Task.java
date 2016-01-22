@@ -95,6 +95,19 @@ public abstract class Task<T extends Serializable> implements Serializable, Node
     DYNAMIC_PARTITIONS, // list of dynamic partitions
   }
 
+  public static enum TaskState {
+    // Task data structures have been initialized
+    INITIALIZED_STATE,
+    // Task has been queued for execution by the driver
+    QUEUED_STATE,
+    // Task is currently running
+    RUNNING_STATE,
+    // Task has completed
+    FINISHED_STATE,
+    // Task state is unkown
+    UNKNOWN_STATE
+  }
+
   // Bean methods
 
   protected boolean rootTask;
@@ -377,6 +390,30 @@ public abstract class Task<T extends Serializable> implements Serializable, Node
     return id;
   }
 
+  public String getExternalHandle() {
+    return getId();
+  }
+
+  public TaskState getTaskState() {
+    if (done())  {
+      return TaskState.FINISHED_STATE;
+    }
+
+    if (started()) {
+      return TaskState.RUNNING_STATE;
+    }
+
+    if (getInitialized()) {
+      return TaskState.INITIALIZED_STATE;
+    }
+
+    if (getQueued()) {
+      return TaskState.QUEUED_STATE;
+    }
+
+    return TaskState.UNKNOWN_STATE;
+  }
+
   public boolean isMapRedTask() {
     return false;
   }
@@ -558,4 +595,6 @@ public abstract class Task<T extends Serializable> implements Serializable, Node
   public boolean equals(Object obj) {
     return toString().equals(String.valueOf(obj));
   }
+
+
 }

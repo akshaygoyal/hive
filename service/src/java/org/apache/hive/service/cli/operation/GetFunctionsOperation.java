@@ -77,6 +77,7 @@ public class GetFunctionsOperation extends MetadataOperation {
   @Override
   public void runInternal() throws HiveSQLException {
     setState(OperationState.RUNNING);
+    markOperationStartTime();
     if (isAuthV2Enabled()) {
       // get databases for schema pattern
       IMetaStoreClient metastoreClient = getParentSession().getMetaStoreClient();
@@ -86,6 +87,7 @@ public class GetFunctionsOperation extends MetadataOperation {
         matchingDbs = metastoreClient.getDatabases(schemaPattern);
       } catch (TException e) {
         setState(OperationState.ERROR);
+        markOperationCompletedTime();
         throw new HiveSQLException(e);
       }
       // authorize this call on the schema objects
@@ -119,6 +121,8 @@ public class GetFunctionsOperation extends MetadataOperation {
     } catch (Exception e) {
       setState(OperationState.ERROR);
       throw new HiveSQLException(e);
+    } finally {
+      markOperationCompletedTime();
     }
   }
 

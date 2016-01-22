@@ -54,6 +54,7 @@ public class GetSchemasOperation extends MetadataOperation {
   @Override
   public void runInternal() throws HiveSQLException {
     setState(OperationState.RUNNING);
+    markOperationStartTime();
     if (isAuthV2Enabled()) {
       String cmdStr = "catalog : " + catalogName + ", schemaPattern : " + schemaName;
       authorizeMetaGets(HiveOperationType.GET_SCHEMAS, null, cmdStr);
@@ -68,6 +69,8 @@ public class GetSchemasOperation extends MetadataOperation {
     } catch (Exception e) {
       setState(OperationState.ERROR);
       throw new HiveSQLException(e);
+    } finally {
+      markOperationCompletedTime();
     }
   }
 

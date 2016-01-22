@@ -18,10 +18,7 @@
 
 package org.apache.hive.service.cli.operation;
 
-import java.io.IOException;
-import java.io.PrintStream;
-import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
+import java.io.*;
 import java.security.PrivilegedExceptionAction;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -40,6 +37,7 @@ import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.ql.CommandNeedRetryException;
 import org.apache.hadoop.hive.ql.Driver;
+import org.apache.hadoop.hive.ql.TaskStatus;
 import org.apache.hadoop.hive.ql.exec.ExplainTask;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.metadata.Hive;
@@ -65,6 +63,9 @@ import org.apache.hive.service.cli.RowSetFactory;
 import org.apache.hive.service.cli.TableSchema;
 import org.apache.hive.service.cli.session.HiveSession;
 import org.apache.hive.service.server.ThreadWithGarbageCleanup;
+import org.codehaus.jackson.JsonGenerationException;
+import org.codehaus.jackson.map.JsonMappingException;
+import org.codehaus.jackson.map.ObjectMapper;
 
 /**
  * SQLOperation.
@@ -108,6 +109,7 @@ public class SQLOperation extends ExecuteStatementOperation {
    */
   public void prepare(HiveConf sqlOperationConf) throws HiveSQLException {
     setState(OperationState.RUNNING);
+    markOperationStartTime();
 
     try {
       driver = new Driver(sqlOperationConf, getParentSession().getUserName());
@@ -155,9 +157,11 @@ public class SQLOperation extends ExecuteStatementOperation {
       }
     } catch (HiveSQLException e) {
       setState(OperationState.ERROR);
+      markOperationCompletedTime();
       throw e;
     } catch (Throwable e) {
       setState(OperationState.ERROR);
+      markOperationCompletedTime();
       throw new HiveSQLException("Error running query: " + e.toString(), e);
     }
   }
@@ -191,6 +195,8 @@ public class SQLOperation extends ExecuteStatementOperation {
     } catch (Throwable e) {
       setState(OperationState.ERROR);
       throw new HiveSQLException("Error running query: " + e.toString(), e);
+    } finally {
+      markOperationCompletedTime();
     }
     setState(OperationState.FINISHED);
   }
@@ -266,6 +272,8 @@ public class SQLOperation extends ExecuteStatementOperation {
         setState(OperationState.ERROR);
         throw new HiveSQLException("The background threadpool cannot accept" +
             " new task for execution, please retry the operation", rejected);
+      } finally {
+        markOperationCompletedTime();
       }
     }
   }
@@ -317,6 +325,7 @@ public class SQLOperation extends ExecuteStatementOperation {
 
   @Override
   public void cancel() throws HiveSQLException {
+    markOperationCompletedTime();
     cleanup(OperationState.CANCELED);
   }
 
@@ -366,6 +375,38 @@ public class SQLOperation extends ExecuteStatementOperation {
     } finally {
       convey.clear();
     }
+  }
+
+  @Override
+  public String getTaskStatus() throws HiveSQLException {
+    if (driver != null) {
+      List<TaskStatus> statuses = driver.getTaskStatuses();
+      if (statuses != null) {
+        ByteArrayOutputStream out = null;
+        try {
+          ObjectMapper mapper = new ObjectMapper();
+          out = new ByteArrayOutputStream();
+          mapper.writeValue(out, statuses);
+          return out.toString("UTF-8");
+        } catch (JsonGenerationException e) {
+          throw new HiveSQLException(e);
+        } catch (JsonMappingException e) {
+          throw new HiveSQLException(e);
+        } catch (IOException e) {
+          throw new HiveSQLException(e);
+        } finally {
+          if (out != null) {
+            try {
+              out.close();
+            } catch (IOException e) {
+              throw new HiveSQLException(e);
+            }
+          }
+        }
+      }
+    }
+    // Driver not initialized
+    return null;
   }
 
   private RowSet decode(List<Object> rows, RowSet rowSet) throws Exception {

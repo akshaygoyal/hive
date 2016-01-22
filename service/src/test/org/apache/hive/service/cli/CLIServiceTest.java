@@ -21,8 +21,10 @@ package org.apache.hive.service.cli;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 
+import java.io.ByteArrayInputStream;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
@@ -36,11 +38,14 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.hive.ql.ErrorMsg;
+import org.apache.hadoop.hive.ql.TaskStatus;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.parse.ASTNode;
 import org.apache.hadoop.hive.ql.parse.HiveSemanticAnalyzerHook;
 import org.apache.hadoop.hive.ql.parse.HiveSemanticAnalyzerHookContext;
 import org.apache.hadoop.hive.ql.parse.SemanticException;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -169,6 +174,9 @@ public abstract class CLIServiceTest {
     // Blocking execute
     queryString = "SELECT ID+1 FROM TEST_EXEC";
     opHandle = client.executeStatement(sessionHandle, queryString, confOverlay);
+
+    OperationStatus opStatus = client.getOperationStatus(opHandle);
+    checkOperationTimes(opHandle, opStatus);
     // Expect query to be completed now
     assertEquals("Query should be finished",
         OperationState.FINISHED, client.getOperationStatus(opHandle).getState());
@@ -266,6 +274,10 @@ public abstract class CLIServiceTest {
     opHandle = client.executeStatementAsync(sessionHandle, queryString, confOverlay);
     System.out.println("Cancelling " + opHandle);
     client.cancelOperation(opHandle);
+
+    OperationStatus operationStatus = client.getOperationStatus(opHandle);
+    checkOperationTimes(opHandle, operationStatus);
+
     state = client.getOperationStatus(opHandle).getState();
     System.out.println(opHandle + " after cancelling, state= " + state);
     assertEquals("Query should be cancelled", OperationState.CANCELED, state);
@@ -489,7 +501,7 @@ public abstract class CLIServiceTest {
     SessionState.get().setIsHiveServerQuery(true); // Pretend we are in HS2.
 
     String queryString = "SET " + HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname
-        + " = false";
+      + " = false";
     client.executeStatement(sessionHandle, queryString, confOverlay);
     return sessionHandle;
   }
@@ -619,5 +631,72 @@ public abstract class CLIServiceTest {
     opHandle = client.executeStatement(sessionHandle, dropTable, null);
     client.closeOperation(opHandle);
     client.closeSession(sessionHandle);
+  }
+
+  @Test
+  public void testTaskStatus() throws Exception {
+    HashMap<String, String> confOverlay = new HashMap<String, String>();
+    SessionHandle sessionHandle = client.openSession("tom", "password",
+      new HashMap<String, String>());
+    assertNotNull(sessionHandle);
+
+    // Change lock manager, otherwise unit-test doesn't go through
+    String setLockMgr = "SET hive.lock.manager=" +
+      "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
+    client.executeStatement(sessionHandle, setLockMgr, confOverlay);
+
+    String createTable = "CREATE TABLE TEST_EXEC_ASYNC(ID STRING)";
+    client.executeStatement(sessionHandle, createTable, confOverlay);
+
+    // nonblocking execute
+    String select = "SELECT ID FROM TEST_EXEC_ASYNC";
+    OperationHandle ophandle =
+      client.executeStatementAsync(sessionHandle, select, confOverlay);
+
+    OperationStatus status = null;
+    int count = 0;
+    while (true) {
+      status = client.getOperationStatus(ophandle);
+      OperationState state = status.getState();
+      System.out.println("Polling: " + ophandle + " count=" + (++count)
+        + " state=" + state);
+
+      String jsonTaskStatus = status.getTaskStatus();
+      if (jsonTaskStatus != null) {
+        System.out.println("JSON TASK STATUS:\n" + jsonTaskStatus);
+        ObjectMapper mapper = new ObjectMapper();
+        ByteArrayInputStream in = new ByteArrayInputStream(jsonTaskStatus.getBytes("UTF-8"));
+        List<TaskStatus> taskStatuses =
+          mapper.readValue(in, new TypeReference<List<TaskStatus>>(){});
+        assertNotNull(taskStatuses);
+        System.out.println("Got statuses:" + taskStatuses.size());
+        for (int i = 0 ; i < taskStatuses.size(); i++) {
+          System.out.println(i + ": " + taskStatuses.get(i).toString());
+        }
+      } else {
+        System.out.println("JSON STATUS NULL");
+      }
+
+
+      if (OperationState.CANCELED == state || state == OperationState.CLOSED
+        || state == OperationState.FINISHED
+        || state == OperationState.ERROR) {
+        break;
+      }
+      Thread.sleep(1000);
+    }
+  }
+
+
+  private void checkOperationTimes(OperationHandle operationHandle, OperationStatus status) {
+    OperationState state = status.getState();
+    if (OperationState.CANCELED == state || state == OperationState.CLOSED
+      || state == OperationState.FINISHED || state == OperationState.ERROR) {
+      System.out.println("##OP " + operationHandle.getHandleIdentifier() + " STATE:" + status.getState()
+        +" START:" + status.getOperationStarted()
+        + " END:" + status.getOperationCompleted());
+      assertFalse(status.getOperationCompleted() ==  0);
+      assertTrue(status.getOperationCompleted() - status.getOperationStarted() >= 0);
+    }
   }
 }

@@ -54,6 +54,7 @@ public class GetTableTypesOperation extends MetadataOperation {
   @Override
   public void runInternal() throws HiveSQLException {
     setState(OperationState.RUNNING);
+    markOperationStartTime();
     if (isAuthV2Enabled()) {
       authorizeMetaGets(HiveOperationType.GET_TABLETYPES, null);
     }
@@ -65,6 +66,8 @@ public class GetTableTypesOperation extends MetadataOperation {
     } catch (Exception e) {
       setState(OperationState.ERROR);
       throw new HiveSQLException(e);
+    } finally {
+      markOperationCompletedTime();
     }
   }
 

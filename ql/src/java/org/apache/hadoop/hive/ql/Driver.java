@@ -1159,7 +1159,7 @@ public class Driver implements CommandProcessor {
   private int compileInternal(String command) {
     int ret;
     final ReentrantLock compileLock = tryAcquireCompileLock(isParallelEnabled,
-        command);
+      command);
     if (compileLock == null) {
       return ErrorMsg.COMPILE_LOCK_TIMED_OUT.getErrorCode();
     }
@@ -1195,8 +1195,8 @@ public class Driver implements CommandProcessor {
     final ReentrantLock compileLock = isParallelEnabled ?
         SessionState.get().getCompileLock() : globalCompileLock;
     long maxCompileLockWaitTime = HiveConf.getTimeVar(
-          this.conf, ConfVars.HIVE_SERVER2_COMPILE_LOCK_TIMEOUT,
-          TimeUnit.SECONDS);
+      this.conf, ConfVars.HIVE_SERVER2_COMPILE_LOCK_TIMEOUT,
+      TimeUnit.SECONDS);
     if (maxCompileLockWaitTime > 0) {
       try {
         if (LOG.isDebugEnabled()) {
@@ -1951,4 +1951,36 @@ public class Driver implements CommandProcessor {
     this.operationId = opId;
   }
 
+  public List<TaskStatus> getTaskStatuses() {
+    if (plan == null) {
+      return null;
+    }
+    List<Task<?>> tasks = new ArrayList<Task<?>>();
+    tasks.addAll(plan.getRootTasks());
+    for (int i = 0; i < tasks.size(); i++) {
+      Task<?> tsk = tasks.get(i);
+      if (tsk.getDependentTasks() != null) {
+        tasks.addAll(tsk.getDependentTasks());
+      }
+    }
+    // add backup tasks if any
+    if (driverCxt != null) {
+      try {
+        Task<? extends Serializable> runnable;
+        while ((runnable = driverCxt.getRunnable(maxthreads)) != null) {
+          if (!tasks.contains(runnable)) {
+            tasks.add(runnable);
+          }
+        }
+      } catch (HiveException e) {
+        console.printError("FAILED: Hive Internal Error: " + Utilities.getNameMessage(e) + "\n"
+          + org.apache.hadoop.util.StringUtils.stringifyException(e));
+      }
+    }
+    List<TaskStatus> statuses = new ArrayList<TaskStatus>(tasks.size());
+    for (Task<?> tsk : tasks) {
+      statuses.add(new TaskStatus(tsk.getId(), tsk.getExternalHandle(), tsk.getTaskState()));
+    }
+    return statuses;
+  }
 }
