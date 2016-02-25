@@ -18,38 +18,8 @@
 
 package org.apache.hadoop.hive.metastore;
 
-import static org.apache.hadoop.hive.metastore.MetaStoreUtils.DEFAULT_DATABASE_NAME;
-import static org.apache.hadoop.hive.metastore.MetaStoreUtils.isIndexTable;
-
-import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.UnknownHostException;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.NoSuchElementException;
-import java.util.Random;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import javax.security.auth.login.LoginException;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hive.common.ObjectPair;
+import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.common.ValidTxnList;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience.Public;
@@ -82,9 +52,10 @@ import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.FireEventRequest;
 import org.apache.hadoop.hive.metastore.api.FireEventResponse;
 import org.apache.hadoop.hive.metastore.api.Function;
+import org.apache.hadoop.hive.metastore.api.GetAllFunctionsResponse;
+import org.apache.hadoop.hive.metastore.api.GetChangeVersionRequest;
 import org.apache.hadoop.hive.metastore.api.GetFileMetadataRequest;
 import org.apache.hadoop.hive.metastore.api.GetFileMetadataResult;
-import org.apache.hadoop.hive.metastore.api.GetAllFunctionsResponse;
 import org.apache.hadoop.hive.metastore.api.GetOpenTxnsInfoResponse;
 import org.apache.hadoop.hive.metastore.api.GetPrincipalsInRoleRequest;
 import org.apache.hadoop.hive.metastore.api.GetPrincipalsInRoleResponse;
@@ -144,7 +115,7 @@ import org.apache.hadoop.hive.metastore.api.UnknownPartitionException;
 import org.apache.hadoop.hive.metastore.api.UnknownTableException;
 import org.apache.hadoop.hive.metastore.api.UnlockRequest;
 import org.apache.hadoop.hive.metastore.partition.spec.PartitionSpecProxy;
-import org.apache.hadoop.hive.metastore.txn.TxnHandler;
+import org.apache.hadoop.hive.metastore.txn.TxnUtils;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.shims.Utils;
 import org.apache.hadoop.hive.thrift.HadoopThriftAuthBridge;
@@ -159,6 +130,36 @@ import org.apache.thrift.transport.TFramedTransport;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.security.auth.login.LoginException;
+import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NoSuchElementException;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.apache.hadoop.hive.metastore.MetaStoreUtils.DEFAULT_DATABASE_NAME;
+import static org.apache.hadoop.hive.metastore.MetaStoreUtils.isIndexTable;
 
 /**
  * Hive Metastore Client.
@@ -192,12 +193,11 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
 
   static final protected Logger LOG = LoggerFactory.getLogger("hive.metastore");
 
-  public HiveMetaStoreClient(HiveConf conf)
-    throws MetaException {
-    this(conf, null);
+  public HiveMetaStoreClient(HiveConf conf) throws MetaException {
+    this(conf, null, true);
   }
 
-  public HiveMetaStoreClient(HiveConf conf, HiveMetaHookLoader hookLoader)
+  public HiveMetaStoreClient(HiveConf conf, HiveMetaHookLoader hookLoader, Boolean allowEmbedded)
     throws MetaException {
 
     this.hookLoader = hookLoader;
@@ -209,9 +209,13 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     fileMetadataBatchSize = HiveConf.getIntVar(
         conf, HiveConf.ConfVars.METASTORE_BATCH_RETRIEVE_OBJECTS_MAX);
 
-    String msUri = conf.getVar(HiveConf.ConfVars.METASTOREURIS);
+    String msUri = conf.getVar(ConfVars.METASTOREURIS);
     localMetaStore = HiveConfUtil.isEmbeddedMetaStore(msUri);
     if (localMetaStore) {
+      if (!allowEmbedded) {
+        throw new MetaException("Embedded metastore is not allowed here. Please configure "
+            + ConfVars.METASTOREURIS.varname + "; it is currently set to [" + msUri + "]");
+      }
       // instantiate the metastore server handler directly instead of connecting
       // through the network
       if (conf.getBoolVar(ConfVars.METASTORE_FASTPATH)) {
@@ -368,16 +372,10 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   @Override
   public void alter_table(String dbname, String tbl_name, Table new_tbl)
       throws InvalidOperationException, MetaException, TException {
-    alter_table(dbname, tbl_name, new_tbl, null);
+    alter_table_with_environmentContext(dbname, tbl_name, new_tbl, null);
   }
 
-  @Override
-  public void alter_table(String dbname, String tbl_name, Table new_tbl, boolean cascade)
-      throws InvalidOperationException, MetaException, TException {
-    client.alter_table_with_cascade(dbname, tbl_name, new_tbl, cascade);
-  }
-
-  public void alter_table(String dbname, String tbl_name, Table new_tbl,
+  public void alter_table_with_environmentContext(String dbname, String tbl_name, Table new_tbl,
       EnvironmentContext envContext) throws InvalidOperationException, MetaException, TException {
     client.alter_table_with_environment_context(dbname, tbl_name, new_tbl, envContext);
   }
@@ -1413,15 +1411,15 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
   }
 
   @Override
-  public void alter_partition(String dbName, String tblName, Partition newPart)
+  public void alter_partition(String dbName, String tblName, Partition newPart, EnvironmentContext environmentContext)
       throws InvalidOperationException, MetaException, TException {
-    client.alter_partition(dbName, tblName, newPart);
+    client.alter_partition_with_environment_context(dbName, tblName, newPart, environmentContext);
   }
 
   @Override
-  public void alter_partitions(String dbName, String tblName, List<Partition> newParts)
+  public void alter_partitions(String dbName, String tblName, List<Partition> newParts, EnvironmentContext environmentContext)
   throws InvalidOperationException, MetaException, TException {
-    client.alter_partitions(dbName, tblName, newParts);
+    client.alter_partitions_with_environment_context(dbName, tblName, newParts, environmentContext);
 }
 
   @Override
@@ -1941,12 +1939,12 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
 
   @Override
   public ValidTxnList getValidTxns() throws TException {
-    return TxnHandler.createValidReadTxnList(client.get_open_txns(), 0);
+    return TxnUtils.createValidReadTxnList(client.get_open_txns(), 0);
   }
 
   @Override
   public ValidTxnList getValidTxns(long currentTxn) throws TException {
-    return TxnHandler.createValidReadTxnList(client.get_open_txns(), currentTxn);
+    return TxnUtils.createValidReadTxnList(client.get_open_txns(), currentTxn);
   }
 
   @Override
@@ -2294,5 +2292,10 @@ public class HiveMetaStoreClient implements IMetaStoreClient {
     }
     CacheFileMetadataResult result = client.cache_file_metadata(req);
     return result.isIsSupported();
+  }
+
+  @Override
+  public long getChangeVersion(String topic) throws TException {
+    return client.get_change_version(new GetChangeVersionRequest(topic)).getVersion();
   }
 }

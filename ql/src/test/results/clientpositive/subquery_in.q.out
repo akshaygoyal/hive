@@ -71,8 +71,8 @@ STAGE PLANS:
             compressed: false
             Statistics: Num rows: 182 Data size: 1939 Basic stats: COMPLETE Column stats: NONE
             table:
-                input format: org.apache.hadoop.mapred.TextInputFormat
-                output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                 serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -180,8 +180,8 @@ STAGE PLANS:
             compressed: false
             Statistics: Num rows: 182 Data size: 1939 Basic stats: COMPLETE Column stats: NONE
             table:
-                input format: org.apache.hadoop.mapred.TextInputFormat
-                output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                 serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -372,8 +372,8 @@ STAGE PLANS:
             compressed: false
             Statistics: Num rows: 28 Data size: 3461 Basic stats: COMPLETE Column stats: NONE
             table:
-                input format: org.apache.hadoop.mapred.TextInputFormat
-                output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                 serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -435,12 +435,15 @@ STAGE PLANS:
           TableScan
             alias: b
             Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
-            Reduce Output Operator
-              key expressions: p_mfgr (type: string), p_size (type: int)
-              sort order: ++
-              Map-reduce partition columns: p_mfgr (type: string)
+            Filter Operator
+              predicate: p_mfgr is not null (type: boolean)
               Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
-              TopN Hash Memory Usage: 0.1
+              Reduce Output Operator
+                key expressions: p_mfgr (type: string), p_size (type: int)
+                sort order: ++
+                Map-reduce partition columns: p_mfgr (type: string)
+                Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
+                TopN Hash Memory Usage: 0.1
       Reduce Operator Tree:
         Select Operator
           expressions: KEY.reducesinkkey0 (type: string), KEY.reducesinkkey1 (type: int)
@@ -468,7 +471,7 @@ STAGE PLANS:
                         isPivotResult: true
             Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: ((rank_window_0 <= 2) and _col2 is not null) (type: boolean)
+              predicate: (rank_window_0 <= 2) (type: boolean)
               Statistics: Num rows: 8 Data size: 968 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: _col2 (type: string), _col5 (type: int)
@@ -530,7 +533,7 @@ STAGE PLANS:
             alias: b
             Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: (p_size is not null and p_mfgr is not null) (type: boolean)
+              predicate: (p_mfgr is not null and p_size is not null) (type: boolean)
               Statistics: Num rows: 26 Data size: 3147 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: p_name (type: string), p_mfgr (type: string), p_size (type: int)
@@ -565,8 +568,8 @@ STAGE PLANS:
               compressed: false
               Statistics: Num rows: 28 Data size: 3461 Basic stats: COMPLETE Column stats: NONE
               table:
-                  input format: org.apache.hadoop.mapred.TextInputFormat
-                  output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                  input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                  output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                   serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -699,8 +702,8 @@ STAGE PLANS:
             compressed: false
             Statistics: Num rows: 182 Data size: 1939 Basic stats: COMPLETE Column stats: NONE
             table:
-                input format: org.apache.hadoop.mapred.TextInputFormat
-                output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                 serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -871,8 +874,8 @@ STAGE PLANS:
               compressed: false
               Statistics: Num rows: 60 Data size: 7257 Basic stats: COMPLETE Column stats: NONE
               table:
-                  input format: org.apache.hadoop.mapred.TextInputFormat
-                  output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                  input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                  output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                   serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-4

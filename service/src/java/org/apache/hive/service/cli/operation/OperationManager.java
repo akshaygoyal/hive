@@ -22,6 +22,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,6 +63,11 @@ public class OperationManager extends AbstractService {
   private final ConcurrentHashMap<OperationHandle, Operation> handleToOperation =
       new ConcurrentHashMap<OperationHandle, Operation>();
 
+  //Following fields for displaying queries on WebUI
+  private Object webuiLock = new Object();
+  private SQLOperationDisplayCache historicSqlOperations;
+  private Map<String, SQLOperationDisplay> liveSqlOperations = new LinkedHashMap<String, SQLOperationDisplay>();
+
   public OperationManager() {
     super(OperationManager.class.getSimpleName());
   }
@@ -72,6 +79,10 @@ public class OperationManager extends AbstractService {
         HiveConf.ConfVars.HIVE_SERVER2_LOGGING_OPERATION_LEVEL));
     } else {
       LOG.debug("Operation level logging is turned off");
+    }
+    if (hiveConf.isWebUiQueryInfoCacheEnabled()) {
+      historicSqlOperations = new SQLOperationDisplayCache(
+        hiveConf.getIntVar(ConfVars.HIVE_SERVER2_WEBUI_MAX_HISTORIC_QUERIES));
     }
     super.init(hiveConf);
   }
@@ -170,21 +181,49 @@ public class OperationManager extends AbstractService {
     return handleToOperation.get(operationHandle);
   }
 
+  private void addOperation(Operation operation) {
+    handleToOperation.put(operation.getHandle(), operation);
+    if (operation instanceof SQLOperation) {
+      synchronized (webuiLock) {
+        liveSqlOperations.put(operation.getHandle().getHandleIdentifier().toString(),
+          ((SQLOperation) operation).getSQLOperationDisplay());
+      }
+    }
+  }
+
+  private Operation removeOperation(OperationHandle opHandle) {
+    Operation operation = handleToOperation.remove(opHandle);
+    if (operation instanceof SQLOperation) {
+      removeSaveSqlOperationDisplay(opHandle);
+    }
+    return operation;
+  }
+
   private Operation removeTimedOutOperation(OperationHandle operationHandle) {
     Operation operation = handleToOperation.get(operationHandle);
     if (operation != null && operation.isTimedOut(System.currentTimeMillis())) {
       handleToOperation.remove(operationHandle, operation);
+      if (operation instanceof SQLOperation) {
+        removeSaveSqlOperationDisplay(operationHandle);
+      }
       return operation;
     }
     return null;
   }
 
-  private void addOperation(Operation operation) {
-    handleToOperation.put(operation.getHandle(), operation);
-  }
-
-  private Operation removeOperation(OperationHandle opHandle) {
-    return handleToOperation.remove(opHandle);
+  private void removeSaveSqlOperationDisplay(OperationHandle operationHandle) {
+    synchronized (webuiLock) {
+      String opKey = operationHandle.getHandleIdentifier().toString();
+      // remove from list of live operations
+      SQLOperationDisplay display = liveSqlOperations.remove(opKey);
+      if (display == null) {
+        LOG.debug("Unexpected display object value of null for operation {}",
+            opKey);
+      } else if (historicSqlOperations != null) {
+        // add to list of saved historic operations
+        historicSqlOperations.put(opKey, display);
+      }
+    }
   }
 
   public OperationStatus getOperationStatus(OperationHandle opHandle)
@@ -312,5 +351,48 @@ public class OperationManager extends AbstractService {
       }
     }
     return removed;
+  }
+
+  /**
+   * @return displays representing a number of historical SQLOperations, at max number of
+   * hive.server2.webui.max.historic.queries
+   */
+  public List<SQLOperationDisplay> getHistoricalSQLOperations() {
+    List<SQLOperationDisplay> result = new LinkedList<>();
+    synchronized (webuiLock) {
+      if (historicSqlOperations != null) {
+        result.addAll(historicSqlOperations.values());
+      }
+    }
+    return result;
+  }
+
+  /**
+   * @return displays representing live SQLOperations
+   */
+  public List<SQLOperationDisplay> getLiveSqlOperations() {
+    List<SQLOperationDisplay> result = new LinkedList<>();
+    synchronized (webuiLock) {
+      result.addAll(liveSqlOperations.values());
+    }
+    return result;
+  }
+
+  /**
+   * @param handle handle of SQLOperation.
+   * @return display representing a particular SQLOperation.
+   */
+  public SQLOperationDisplay getSQLOperationDisplay(String handle) {
+    synchronized (webuiLock) {
+      if (historicSqlOperations == null) {
+        return null;
+      }
+
+      SQLOperationDisplay result = liveSqlOperations.get(handle);
+      if (result != null) {
+        return result;
+      }
+      return historicSqlOperations.get(handle);
+    }
   }
 }

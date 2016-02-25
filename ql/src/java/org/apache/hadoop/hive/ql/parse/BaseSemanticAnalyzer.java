@@ -102,12 +102,15 @@ public abstract class BaseSemanticAnalyzer {
    * back and set it once we actually start running the query.
    */
   protected Set<FileSinkDesc> acidFileSinks = new HashSet<FileSinkDesc>();
+  
+  // whether any ACID table is involved in a query
+  protected boolean acidInQuery;
 
   public static int HIVE_COLUMN_ORDER_ASC = 1;
   public static int HIVE_COLUMN_ORDER_DESC = 0;
 
   /**
-   * ReadEntitites that are passed to the hooks.
+   * ReadEntities that are passed to the hooks.
    */
   protected HashSet<ReadEntity> inputs;
   /**
@@ -781,7 +784,7 @@ public abstract class BaseSemanticAnalyzer {
         throw new SemanticException(ErrorMsg.INVALID_TABLE.getMsg(ast
             .getChild(0)), ite);
       } catch (HiveException e) {
-        throw new SemanticException(ErrorMsg.GENERIC_ERROR.getMsg(ast
+        throw new SemanticException(ErrorMsg.CANNOT_RETRIEVE_TABLE_METADATA.getMsg(ast
             .getChild(childIndex), e.getMessage()), e);
       }
 
@@ -1077,6 +1080,10 @@ public abstract class BaseSemanticAnalyzer {
 
   public Set<FileSinkDesc> getAcidFileSinks() {
     return acidFileSinks;
+  }
+  
+  public boolean hasAcidInQuery() {
+    return acidInQuery;
   }
 
   /**
@@ -1469,5 +1476,17 @@ public abstract class BaseSemanticAnalyzer {
 
   protected String toMessage(ErrorMsg message, Object detail) {
     return detail == null ? message.getMsg() : message.getMsg(detail.toString());
+  }
+
+  public List<Task<? extends Serializable>> getAllRootTasks() {
+    return rootTasks;
+  }
+
+  public HashSet<ReadEntity> getAllInputs() {
+    return inputs;
+  }
+
+  public HashSet<WriteEntity> getAllOutputs() {
+    return outputs;
   }
 }

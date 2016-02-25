@@ -22,17 +22,21 @@ import java.io.*;
 import java.security.PrivilegedExceptionAction;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.CharEncoding;
+import org.apache.hadoop.hive.common.metrics.common.Metrics;
+import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
+import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
+import org.apache.hadoop.hive.common.metrics.common.MetricsScope;
 import org.apache.hadoop.hive.conf.HiveConf;
-import org.apache.hadoop.hive.conf.HiveVariableSource;
-import org.apache.hadoop.hive.conf.VariableSubstitution;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.ql.CommandNeedRetryException;
@@ -71,6 +75,7 @@ import org.codehaus.jackson.map.ObjectMapper;
  * SQLOperation.
  *
  */
+@SuppressWarnings("deprecation")
 public class SQLOperation extends ExecuteStatementOperation {
 
   private Driver driver = null;
@@ -79,12 +84,27 @@ public class SQLOperation extends ExecuteStatementOperation {
   private Schema mResultSchema = null;
   private SerDe serde = null;
   private boolean fetchStarted = false;
+  private volatile MetricsScope currentSQLStateScope;
+
+  //Display for WebUI.
+  private SQLOperationDisplay sqlOpDisplay;
+
+  /**
+   * A map to track query count running by each user
+   */
+  private static Map<String, AtomicInteger> userQueries = new HashMap<String, AtomicInteger>();
+  private static final String ACTIVE_SQL_USER = MetricsConstant.SQL_OPERATION_PREFIX + "active_user";
 
   public SQLOperation(HiveSession parentSession, String statement, Map<String,
       String> confOverlay, boolean runInBackground) {
     // TODO: call setRemoteUser in ExecuteStatementOperation or higher.
     super(parentSession, statement, confOverlay, runInBackground);
     setupSessionIO(parentSession.getSessionState());
+    try {
+      sqlOpDisplay = new SQLOperationDisplay(this);
+    } catch (HiveSQLException e) {
+      LOG.warn("Error calcluating SQL Operation Display for webui", e);
+    }
   }
 
   private void setupSessionIO(SessionState sessionState) {
@@ -113,6 +133,7 @@ public class SQLOperation extends ExecuteStatementOperation {
 
     try {
       driver = new Driver(sqlOperationConf, getParentSession().getUserName());
+      sqlOpDisplay.setQueryDisplay(driver.getQueryDisplay());
 
       // set the operation handle information in Driver, so that thrift API users
       // can use the operation handle they receive, to lookup query information in
@@ -166,10 +187,6 @@ public class SQLOperation extends ExecuteStatementOperation {
     }
   }
 
-  public String getQueryStr() {
-    return driver == null || driver.getPlan() == null ? "Unknown" : driver.getPlan().getQueryStr();
-  }
-
   private void runQuery(HiveConf sqlOperationConf) throws HiveSQLException {
     try {
       // In Hive server mode, we are not able to retry in the FetchTask
@@ -205,6 +222,7 @@ public class SQLOperation extends ExecuteStatementOperation {
   public void runInternal() throws HiveSQLException {
     setState(OperationState.PENDING);
     final HiveConf opConfig = getConfigForOperation();
+
     prepare(opConfig);
     if (!shouldRunAsync()) {
       runQuery(opConfig);
@@ -312,6 +330,7 @@ public class SQLOperation extends ExecuteStatementOperation {
         backgroundHandle.cancel(true);
       }
     }
+
     if (driver != null) {
       driver.close();
       driver.destroy();
@@ -519,5 +538,73 @@ public class SQLOperation extends ExecuteStatementOperation {
       }
     }
     return sqlOperationConf;
+  }
+
+  /**
+   * Get summary information of this SQLOperation for display in WebUI.
+   */
+  public SQLOperationDisplay getSQLOperationDisplay() {
+    return sqlOpDisplay;
+  }
+
+  @Override
+  protected void onNewState(OperationState state, OperationState prevState) {
+    currentSQLStateScope = setMetrics(currentSQLStateScope, MetricsConstant.SQL_OPERATION_PREFIX,
+      MetricsConstant.COMPLETED_SQL_OPERATION_PREFIX, state);
+
+    Metrics metrics = MetricsFactory.getInstance();
+    if (metrics != null) {
+      try {
+        // New state is changed to running from something else (user is active)
+        if (state == OperationState.RUNNING && prevState != state) {
+          incrementUserQueries(metrics);
+        }
+        // New state is not running (user not active) any more
+        if (prevState == OperationState.RUNNING && prevState != state) {
+          decrementUserQueries(metrics);
+        }
+      } catch (IOException e) {
+        LOG.warn("Error metrics", e);
+      }
+    }
+
+    if (state == OperationState.CLOSED) {
+      sqlOpDisplay.closed();
+    } else {
+      //CLOSED state not interesting, state before (FINISHED, ERROR) is.
+      sqlOpDisplay.updateState(state);
+    }
+  }
+
+  private void incrementUserQueries(Metrics metrics) throws IOException {
+    String username = parentSession.getUserName();
+    if (username != null) {
+      synchronized (userQueries) {
+        AtomicInteger count = userQueries.get(username);
+        if (count == null) {
+          count = new AtomicInteger(0);
+          AtomicInteger prev = userQueries.put(username, count);
+          if (prev == null) {
+            metrics.incrementCounter(ACTIVE_SQL_USER);
+          } else {
+            count = prev;
+          }
+        }
+        count.incrementAndGet();
+      }
+    }
+  }
+
+  private void decrementUserQueries(Metrics metrics) throws IOException {
+    String username = parentSession.getUserName();
+    if (username != null) {
+      synchronized (userQueries) {
+        AtomicInteger count = userQueries.get(username);
+        if (count != null && count.decrementAndGet() <= 0) {
+          metrics.decrementCounter(ACTIVE_SQL_USER);
+          userQueries.remove(username);
+        }
+      }
+    }
   }
 }

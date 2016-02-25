@@ -252,7 +252,7 @@ public class TestDbNotificationListener {
 
     Partition newPart = new Partition(Arrays.asList("today"), "default", "alterparttable",
         startTime, startTime + 1, sd, emptyParameters);
-    msClient.alter_partition("default", "alterparttable", newPart);
+    msClient.alter_partition("default", "alterparttable", newPart, null);
 
     NotificationEventResponse rsp = msClient.getNextNotification(firstEventId, 0, null);
     assertEquals(3, rsp.getEventsSize());
@@ -534,35 +534,35 @@ public class TestDbNotificationListener {
     for (NotificationEvent ne : rsp.getEvents()) LOG.debug("EVENT: " + ne.getMessage());
     // For reasons not clear to me there's one or more alter partitions after add partition and
     // insert.
-    assertEquals(25, rsp.getEventsSize());
+    assertEquals(19, rsp.getEventsSize());
     NotificationEvent event = rsp.getEvents().get(1);
     assertEquals(firstEventId + 2, event.getEventId());
     assertEquals(HCatConstants.HCAT_ADD_PARTITION_EVENT, event.getEventType());
-    event = rsp.getEvents().get(5);
-    assertEquals(firstEventId + 6, event.getEventId());
+    event = rsp.getEvents().get(3);
+    assertEquals(firstEventId + 4, event.getEventId());
     assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
     // Make sure the files are listed in the insert
     assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
+    event = rsp.getEvents().get(6);
+    assertEquals(firstEventId + 7, event.getEventId());
+    assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
+    assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
     event = rsp.getEvents().get(9);
     assertEquals(firstEventId + 10, event.getEventId());
-    assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
-    assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
-    event = rsp.getEvents().get(12);
-    assertEquals(firstEventId + 13, event.getEventId());
     assertEquals(HCatConstants.HCAT_ADD_PARTITION_EVENT, event.getEventType());
-    event = rsp.getEvents().get(14);
-    assertEquals(firstEventId + 15, event.getEventId());
+    event = rsp.getEvents().get(10);
+    assertEquals(firstEventId + 11, event.getEventId());
     assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
     assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
+    event = rsp.getEvents().get(13);
+    assertEquals(firstEventId + 14, event.getEventId());
+    assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
+    assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
+    event = rsp.getEvents().get(16);
+    assertEquals(firstEventId + 17, event.getEventId());
+    assertEquals(HCatConstants.HCAT_ADD_PARTITION_EVENT, event.getEventType());
     event = rsp.getEvents().get(18);
     assertEquals(firstEventId + 19, event.getEventId());
-    assertEquals(HCatConstants.HCAT_INSERT_EVENT, event.getEventType());
-    assertTrue(event.getMessage().matches(".*\"files\":\\[\"pfile.*"));
-    event = rsp.getEvents().get(21);
-    assertEquals(firstEventId + 22, event.getEventId());
-    assertEquals(HCatConstants.HCAT_ADD_PARTITION_EVENT, event.getEventType());
-    event = rsp.getEvents().get(24);
-    assertEquals(firstEventId + 25, event.getEventId());
     assertEquals(HCatConstants.HCAT_DROP_PARTITION_EVENT, event.getEventType());
   }
 }

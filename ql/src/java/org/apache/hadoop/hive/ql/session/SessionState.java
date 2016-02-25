@@ -42,6 +42,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.hadoop.hive.ql.lockmgr.DbTxnManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -400,13 +401,19 @@ public class SessionState {
 
   /**
    * Initialize the transaction manager.  This is done lazily to avoid hard wiring one
-   * transaction manager at the beginning of the session.  In general users shouldn't change
-   * this, but it's useful for testing.
+   * transaction manager at the beginning of the session.
    * @param conf Hive configuration to initialize transaction manager
    * @return transaction manager
    * @throws LockException
    */
   public synchronized HiveTxnManager initTxnMgr(HiveConf conf) throws LockException {
+    // Only change txnMgr if the setting has changed
+    if (txnMgr != null &&
+        !txnMgr.getTxnManagerName().equals(conf.getVar(HiveConf.ConfVars.HIVE_TXN_MANAGER))) {
+      txnMgr.closeTxnManager();
+      txnMgr = null;
+    }
+
     if (txnMgr == null) {
       txnMgr = TxnManagerFactory.getTxnManagerFactory().getTxnManager(conf);
     }
@@ -544,6 +551,12 @@ public class SessionState {
           throw new RuntimeException(e);
         }
       }
+    } catch (RuntimeException e) {
+      throw e;
+    } catch (Hive.SchemaException e) {
+      RuntimeException ex = new RuntimeException(e.getMessage());
+      ex.setStackTrace(new StackTraceElement[0]);
+      throw ex;
     } catch (Exception e) {
       // Catch-all due to some exec time dependencies on session state
       // that would cause ClassNoFoundException otherwise
@@ -734,9 +747,11 @@ public class SessionState {
   private void dropSessionPaths(Configuration conf) throws IOException {
     if (hdfsSessionPath != null) {
       hdfsSessionPath.getFileSystem(conf).delete(hdfsSessionPath, true);
+      LOG.info("Deleted HDFS directory: " + hdfsSessionPath);
     }
     if (localSessionPath != null) {
       FileSystem.getLocal(conf).delete(localSessionPath, true);
+      LOG.info("Deleted local directory: " + localSessionPath);
     }
     deleteTmpOutputFile();
     deleteTmpErrOutputFile();
@@ -1459,10 +1474,15 @@ public class SessionState {
       tezSessionState = null;
     }
 
-    closeSparkSession();
-    registry.closeCUDFLoaders();
-    dropSessionPaths(conf);
-    unCacheDataNucleusClassLoaders();
+    try {
+      closeSparkSession();
+      registry.closeCUDFLoaders();
+      dropSessionPaths(conf);
+      unCacheDataNucleusClassLoaders();
+    } finally {
+      // removes the threadlocal variables, closes underlying HMS connection
+      Hive.closeCurrent();
+    }
   }
 
   private void unCacheDataNucleusClassLoaders() {

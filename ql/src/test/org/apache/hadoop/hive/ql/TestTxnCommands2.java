@@ -23,6 +23,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.FileUtils;
+import org.apache.hadoop.hive.common.ValidTxnList;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HouseKeeperService;
 import org.apache.hadoop.hive.metastore.api.CompactionRequest;
@@ -31,9 +32,10 @@ import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.ShowCompactRequest;
 import org.apache.hadoop.hive.metastore.api.ShowCompactResponse;
 import org.apache.hadoop.hive.metastore.api.ShowCompactResponseElement;
-import org.apache.hadoop.hive.metastore.txn.CompactionTxnHandler;
 import org.apache.hadoop.hive.metastore.txn.TxnDbUtil;
-import org.apache.hadoop.hive.metastore.txn.TxnHandler;
+import org.apache.hadoop.hive.ql.io.HiveInputFormat;
+import org.apache.hadoop.hive.metastore.txn.TxnStore;
+import org.apache.hadoop.hive.metastore.txn.TxnUtils;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.ql.txn.AcidCompactionHistoryService;
@@ -97,6 +99,7 @@ public class TestTxnCommands2 {
     hiveConf.set(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname, "false");
     hiveConf.set(HiveConf.ConfVars.METASTOREWAREHOUSE.varname, TEST_WAREHOUSE_DIR);
     hiveConf.setVar(HiveConf.ConfVars.HIVEMAPREDMODE, "nonstrict");
+    hiveConf.setVar(HiveConf.ConfVars.HIVEINPUTFORMAT, HiveInputFormat.class.getName());
     TxnDbUtil.setConfValues(hiveConf);
     TxnDbUtil.prepDb();
     File f = new File(TEST_WAREHOUSE_DIR);
@@ -399,6 +402,19 @@ public class TestTxnCommands2 {
   }
 
   @Test
+  public void testValidTxnsBookkeeping() throws Exception {
+    // 1. Run a query against a non-ACID table, and we shouldn't have txn logged in conf
+    runStatementOnDriver("select * from " + Table.NONACIDORCTBL);
+    String value = hiveConf.get(ValidTxnList.VALID_TXNS_KEY);
+    Assert.assertNull("The entry should be null for query that doesn't involve ACID tables", value);
+
+    // 2. Run a query against an ACID table, and we should have txn logged in conf
+    runStatementOnDriver("select * from " + Table.ACIDTBL);
+    value = hiveConf.get(ValidTxnList.VALID_TXNS_KEY);
+    Assert.assertNotNull("The entry shouldn't be null for query that involves ACID tables", value);
+  }
+
+  @Test
   public void testUpdateMixedCase() throws Exception {
     int[][] tableData = {{1,2},{3,3},{5,3}};
     runStatementOnDriver("insert into " + Table.ACIDTBL + "(a,b) " + makeValuesClause(tableData));
@@ -484,7 +500,7 @@ public class TestTxnCommands2 {
     hiveConf.setBoolVar(HiveConf.ConfVars.HIVETESTMODEFAILCOMPACTION, true);
 
     int numFailedCompactions = hiveConf.getIntVar(HiveConf.ConfVars.COMPACTOR_INITIATOR_FAILED_THRESHOLD);
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(hiveConf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(hiveConf);
     AtomicBoolean stop = new AtomicBoolean(true);
     //create failed compactions
     for(int i = 0; i < numFailedCompactions; i++) {
@@ -554,27 +570,27 @@ public class TestTxnCommands2 {
     private int working;
     private int total;
   }
-  private static CompactionsByState countCompacts(TxnHandler txnHandler) throws MetaException {
+  private static CompactionsByState countCompacts(TxnStore txnHandler) throws MetaException {
     ShowCompactResponse resp = txnHandler.showCompact(new ShowCompactRequest());
     CompactionsByState compactionsByState = new CompactionsByState();
     compactionsByState.total = resp.getCompactsSize();
     for(ShowCompactResponseElement compact : resp.getCompacts()) {
-      if(TxnHandler.FAILED_RESPONSE.equals(compact.getState())) {
+      if(TxnStore.FAILED_RESPONSE.equals(compact.getState())) {
         compactionsByState.failed++;
       }
-      else if(TxnHandler.CLEANING_RESPONSE.equals(compact.getState())) {
+      else if(TxnStore.CLEANING_RESPONSE.equals(compact.getState())) {
         compactionsByState.readyToClean++;
       }
-      else if(TxnHandler.INITIATED_RESPONSE.equals(compact.getState())) {
+      else if(TxnStore.INITIATED_RESPONSE.equals(compact.getState())) {
         compactionsByState.initiated++;
       }
-      else if(TxnHandler.SUCCEEDED_RESPONSE.equals(compact.getState())) {
+      else if(TxnStore.SUCCEEDED_RESPONSE.equals(compact.getState())) {
         compactionsByState.succeeded++;
       }
-      else if(TxnHandler.WORKING_RESPONSE.equals(compact.getState())) {
+      else if(TxnStore.WORKING_RESPONSE.equals(compact.getState())) {
         compactionsByState.working++;
       }
-      else if(TxnHandler.ATTEMPTED_RESPONSE.equals(compact.getState())) {
+      else if(TxnStore.ATTEMPTED_RESPONSE.equals(compact.getState())) {
         compactionsByState.attempted++;
       }
     }
@@ -630,7 +646,7 @@ public class TestTxnCommands2 {
     runStatementOnDriver("update " + tblName + " set b = 'blah' where a = 3");
 
     //run Worker to execute compaction
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(hiveConf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(hiveConf);
     txnHandler.compact(new CompactionRequest("default", tblName, CompactionType.MINOR));
     Worker t = new Worker();
     t.setThreadId((int) t.getId());

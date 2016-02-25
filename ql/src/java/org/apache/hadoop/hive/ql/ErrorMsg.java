@@ -350,7 +350,7 @@ public enum ErrorMsg {
   TABLE_NOT_PARTITIONED(10241, "Table {0} is not a partitioned table", true),
   DATABSAE_ALREADY_EXISTS(10242, "Database {0} already exists", true),
   CANNOT_REPLACE_COLUMNS(10243, "Replace columns is not supported for table {0}. SerDe may be incompatible.", true),
-  BAD_LOCATION_VALUE(10244, "{0}  is not absolute or has no scheme information.  Please specify a complete absolute uri with scheme information."),
+  BAD_LOCATION_VALUE(10244, "{0}  is not absolute.  Please specify a complete absolute uri."),
   UNSUPPORTED_ALTER_TBL_OP(10245, "{0} alter table options is not supported"),
   INVALID_BIGTABLE_MAPJOIN(10246, "{0} table chosen for streaming is not valid", true),
   MISSING_OVER_CLAUSE(10247, "Missing over clause for function : "),
@@ -380,6 +380,7 @@ public enum ErrorMsg {
   TXN_ABORTED(10263, "Transaction manager has aborted the transaction {0}.", true),
   DBTXNMGR_REQUIRES_CONCURRENCY(10264,
       "To use DbTxnManager you must set hive.support.concurrency=true"),
+  TXNMGR_NOT_ACID(10265, "This command is not allowed on an ACID table {0}.{1} with a non-ACID transaction manager", true),
 
   LOCK_NO_SUCH_LOCK(10270, "No record of lock {0} could be found, " +
       "may have timed out", true),
@@ -436,6 +437,15 @@ public enum ErrorMsg {
   HIVE_GROUPING_SETS_AGGR_NOMAPAGGR_MULTIGBY(10315,
       "Grouping sets aggregations (with rollups or cubes) are not allowed when " +
       "HIVEMULTIGROUPBYSINGLEREDUCER is turned on. Set hive.multigroupby.singlereducer=false if you want to use grouping sets"),
+  CANNOT_RETRIEVE_TABLE_METADATA(10316, "Error while retrieving table metadata"),
+  CANNOT_DROP_INDEX(10317, "Error while dropping index"),
+  INVALID_AST_TREE(10318, "Internal error : Invalid AST"),
+  ERROR_SERIALIZE_METASTORE(10319, "Error while serializing the metastore objects"),
+  IO_ERROR(10320, "Error while peforming IO operation "),
+  ERROR_SERIALIZE_METADATA(10321, "Error while serializing the metadata"),
+  INVALID_LOAD_TABLE_FILE_WORK(10322, "Invalid Load Table Work or Load File Work"),
+  CLASSPATH_ERROR(10323, "Classpath error"),
+  IMPORT_SEMANTIC_ERROR(10324, "Import Semantic Analyzer Error"),
   //========================== 20000 range starts here ========================//
   SCRIPT_INIT_ERROR(20000, "Unable to initialize custom script."),
   SCRIPT_IO_ERROR(20001, "An error occurred while reading or writing to your custom script. "
@@ -503,7 +513,10 @@ public enum ErrorMsg {
           "schema.evolution.columns / schema.evolution.columns.types " +
           "nor the " +
           "columns / columns.types " +
-          "are set.  Table schema information is required to read ACID tables")
+          "are set.  Table schema information is required to read ACID tables"),
+  ACID_TABLES_MUST_BE_READ_WITH_ACID_READER(30021, "An ORC ACID reader required to read ACID tables"),
+  ACID_TABLES_MUST_BE_READ_WITH_HIVEINPUTFORMAT(30022, "Must use HiveInputFormat to read ACID tables " +
+          "(set hive.input.format=org.apache.hadoop.hive.ql.io.HiveInputFormat)")
   ;
 
   private int errorCode;

@@ -33,6 +33,9 @@ import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
 import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.common.ServerUtils;
+import org.apache.hadoop.hive.shims.HadoopShims.KerberosNameShim;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hive.service.AbstractService;
 import org.apache.hive.service.ServiceException;
 import org.apache.hive.service.ServiceUtils;
@@ -158,6 +161,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
         if (metrics != null) {
           try {
             metrics.incrementCounter(MetricsConstant.OPEN_CONNECTIONS);
+            metrics.incrementCounter(MetricsConstant.CUMULATIVE_CONNECTION_COUNT);
           } catch (Exception e) {
             LOG.warn("Error Reporting JDO operation to Metrics system", e);
           }
@@ -203,21 +207,19 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
   @Override
   public synchronized void init(HiveConf hiveConf) {
     this.hiveConf = hiveConf;
-    // Initialize common server configs needed in both binary & http modes
-    String portString;
-    hiveHost = System.getenv("HIVE_SERVER2_THRIFT_BIND_HOST");
+
+    String hiveHost = System.getenv("HIVE_SERVER2_THRIFT_BIND_HOST");
     if (hiveHost == null) {
       hiveHost = hiveConf.getVar(ConfVars.HIVE_SERVER2_THRIFT_BIND_HOST);
     }
     try {
-      if (hiveHost != null && !hiveHost.isEmpty()) {
-        serverIPAddress = InetAddress.getByName(hiveHost);
-      } else {
-        serverIPAddress = InetAddress.getLocalHost();
-      }
+      serverIPAddress = ServerUtils.getHostAddress(hiveHost);
     } catch (UnknownHostException e) {
       throw new ServiceException(e);
     }
+
+    // Initialize common server configs needed in both binary & http modes
+    String portString;
     // HTTP mode
     if (HiveServer2.isHTTPTransportMode(hiveConf)) {
       workerKeepAliveTime =
@@ -408,7 +410,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
    * @return
    * @throws HiveSQLException
    */
-  private String getUserName(TOpenSessionReq req) throws HiveSQLException {
+  private String getUserName(TOpenSessionReq req) throws HiveSQLException, IOException {
     String userName = null;
     // Kerberos
     if (isKerberosAuthMode()) {
@@ -434,12 +436,12 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
     return effectiveClientUser;
   }
 
-  private String getShortName(String userName) {
+  private String getShortName(String userName) throws IOException {
     String ret = null;
+
     if (userName != null) {
-      int indexOfDomainMatch = ServiceUtils.indexOfDomainMatch(userName);
-      ret = (indexOfDomainMatch <= 0) ? userName :
-          userName.substring(0, indexOfDomainMatch);
+      KerberosNameShim fullKerberosName = ShimLoader.getHadoopShims().getKerberosNameShim(userName);
+      ret = fullKerberosName.getShortName();
     }
 
     return ret;

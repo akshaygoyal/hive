@@ -72,7 +72,7 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
 
   private static final String MR_JAR_PROPERTY = "tmpjars";
   private static final transient Logger LOG = LoggerFactory.getLogger(RemoteHiveSparkClient.class);
-  private static final long MAX_PREWARM_TIME = 30000; // 30s
+  private static final long MAX_PREWARM_TIME = 5000; // 5s
   private static final transient Splitter CSV_SPLITTER = Splitter.on(",").omitEmptyStrings();
 
   private transient Map<String, String> conf;
@@ -115,10 +115,11 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
           LOG.info("Finished prewarming Spark executors. The current number of executors is " + curExecutors);
           return;
         }
-        Thread.sleep(1000); // sleep 1 second
+        Thread.sleep(500); // sleep half a second
       } while (System.currentTimeMillis() - ts < MAX_PREWARM_TIME);
 
-      LOG.info("Timeout (60s) occurred while prewarming executors. The current number of executors is " + curExecutors);
+      LOG.info("Timeout (" + MAX_PREWARM_TIME + 
+          "s) occurred while prewarming executors. The current number of executors is " + curExecutors);
     }
   }
 
@@ -297,8 +298,9 @@ public class RemoteHiveSparkClient implements HiveSparkClient {
       // may need to load classes from this jar in other threads.
       Map<String, Long> addedJars = jc.getAddedJars();
       if (addedJars != null && !addedJars.isEmpty()) {
-        SparkClientUtilities.addToClassPath(addedJars, localJobConf, jc.getLocalTmpDir());
-        localJobConf.set(Utilities.HIVE_ADDED_JARS, StringUtils.join(addedJars.keySet(), ";"));
+        List<String> localAddedJars = SparkClientUtilities.addToClassPath(addedJars,
+            localJobConf, jc.getLocalTmpDir());
+        localJobConf.set(Utilities.HIVE_ADDED_JARS, StringUtils.join(localAddedJars, ";"));
       }
 
       Path localScratchDir = KryoSerializer.deserialize(scratchDirBytes, Path.class);

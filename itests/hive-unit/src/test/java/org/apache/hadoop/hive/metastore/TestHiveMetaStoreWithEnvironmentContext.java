@@ -83,7 +83,7 @@ public class TestHiveMetaStoreWithEnvironmentContext extends TestCase {
     hiveConf.set(HiveConf.ConfVars.POSTEXECHOOKS.varname, "");
     hiveConf.set(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY.varname, "false");
     SessionState.start(new CliSessionState(hiveConf));
-    msc = new HiveMetaStoreClient(hiveConf, null);
+    msc = new HiveMetaStoreClient(hiveConf);
 
     msc.dropDatabase(dbName, true, true);
 
@@ -173,7 +173,7 @@ public class TestHiveMetaStoreWithEnvironmentContext extends TestCase {
     assertEquals(envContext, appendPartEvent.getEnvironmentContext());
 
     table.setTableName(renamed);
-    msc.alter_table(dbName, tblName, table, envContext);
+    msc.alter_table_with_environmentContext(dbName, tblName, table, envContext);
     listSize++;
     assertEquals(notifyList.size(), listSize);
     AlterTableEvent alterTableEvent = (AlterTableEvent) notifyList.get(listSize-1);
@@ -181,7 +181,7 @@ public class TestHiveMetaStoreWithEnvironmentContext extends TestCase {
     assertEquals(envContext, alterTableEvent.getEnvironmentContext());
 
     table.setTableName(tblName);
-    msc.alter_table(dbName, renamed, table, envContext);
+    msc.alter_table_with_environmentContext(dbName, renamed, table, envContext);
     listSize++;
     assertEquals(notifyList.size(), listSize);
 

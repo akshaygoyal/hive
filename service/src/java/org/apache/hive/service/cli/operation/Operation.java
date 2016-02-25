@@ -32,6 +32,7 @@ import org.apache.hadoop.hive.common.metrics.common.MetricsConstant;
 import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.common.metrics.common.MetricsScope;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.ql.QueryPlan;
 import org.apache.hadoop.hive.ql.processors.CommandProcessorResponse;
 import org.apache.hadoop.hive.ql.session.OperationLog;
 import org.apache.hadoop.hive.ql.session.SessionState;
@@ -57,8 +58,8 @@ public abstract class Operation {
   public static final String QUERYID_LOG_KEY = "queryId";
 
   protected final HiveSession parentSession;
-  private OperationState state = OperationState.INITIALIZED;
-  private MetricsScope currentStateScope;
+  private volatile OperationState state = OperationState.INITIALIZED;
+  private volatile MetricsScope currentStateScope;
   private final OperationHandle opHandle;
   private HiveConf configuration;
   public static final FetchOrientation DEFAULT_FETCH_ORIENTATION = FetchOrientation.FETCH_NEXT;
@@ -74,6 +75,7 @@ public abstract class Operation {
 
   private long operationTimeout;
   private volatile long lastAccessTime;
+  private final long beginTime;
 
   protected long operationStart;
   protected long operationComplete;
@@ -83,6 +85,8 @@ public abstract class Operation {
 
   protected Operation(HiveSession parentSession, OperationType opType, boolean runInBackground) {
     this(parentSession, null, opType, runInBackground);
+    // Generate a queryId for the operation if no queryId is provided
+    confOverlay.put(HiveConf.ConfVars.HIVEQUERYID.varname, QueryPlan.makeQueryId());
  }
 
   protected Operation(HiveSession parentSession, Map<String, String> confOverlay, OperationType opType, boolean runInBackground) {
@@ -92,7 +96,8 @@ public abstract class Operation {
     }
     this.runAsync = runInBackground;
     this.opHandle = new OperationHandle(opType, parentSession.getProtocolVersion());
-    lastAccessTime = System.currentTimeMillis();
+    beginTime = System.currentTimeMillis();
+    lastAccessTime = beginTime;
     operationTimeout = HiveConf.getTimeVar(parentSession.getHiveConf(),
         HiveConf.ConfVars.HIVE_SERVER2_IDLE_OPERATION_TIMEOUT, TimeUnit.MILLISECONDS);
     setMetrics(state);
@@ -159,8 +164,10 @@ public abstract class Operation {
 
   protected final OperationState setState(OperationState newState) throws HiveSQLException {
     state.validateTransition(newState);
+    OperationState prevState = state;
     this.state = newState;
     setMetrics(state);
+    onNewState(state, prevState);
     this.lastAccessTime = System.currentTimeMillis();
     return this.state;
   }
@@ -401,24 +408,42 @@ public abstract class Operation {
     OperationState.UNKNOWN
   );
 
-  protected void setMetrics(OperationState state) {
-     Metrics metrics = MetricsFactory.getInstance();
-     if (metrics != null) {
-       try {
-         if (currentStateScope != null) {
-           metrics.endScope(currentStateScope);
-           currentStateScope = null;
-         }
-         if (scopeStates.contains(state)) {
-           currentStateScope = metrics.createScope(MetricsConstant.OPERATION_PREFIX + state.toString());
-         }
-         if (terminalStates.contains(state)) {
-           metrics.incrementCounter(MetricsConstant.COMPLETED_OPERATION_PREFIX + state.toString());
-         }
-       } catch (IOException e) {
-         LOG.warn("Error metrics", e);
-       }
+  private void setMetrics(OperationState state) {
+    currentStateScope = setMetrics(currentStateScope, MetricsConstant.OPERATION_PREFIX,
+      MetricsConstant.COMPLETED_OPERATION_PREFIX, state);
+  }
+
+  protected static MetricsScope setMetrics(MetricsScope stateScope, String operationPrefix,
+      String completedOperationPrefix, OperationState state) {
+    Metrics metrics = MetricsFactory.getInstance();
+    if (metrics != null) {
+      try {
+        if (stateScope != null) {
+          metrics.endScope(stateScope);
+          stateScope = null;
+        }
+        if (scopeStates.contains(state)) {
+          stateScope = metrics.createScope(operationPrefix + state);
+        }
+        if (terminalStates.contains(state)) {
+          metrics.incrementCounter(completedOperationPrefix + state);
+        }
+      } catch (IOException e) {
+        LOG.warn("Error metrics", e);
+      }
     }
+    return stateScope;
+  }
+
+  public long getBeginTime() {
+    return beginTime;
+  }
+
+  protected OperationState getState() {
+    return state;
+  }
+
+  protected void onNewState(OperationState state, OperationState prevState) {
   }
 
   public long getOperationComplete() {

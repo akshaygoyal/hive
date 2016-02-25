@@ -20,14 +20,14 @@ package org.apache.hadoop.hive.ql.plan;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.hadoop.hive.ql.exec.PTFUtils;
+import org.apache.hadoop.hive.ql.io.AcidUtils;
 import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.ql.metadata.VirtualColumn;
-import org.apache.hadoop.hive.ql.parse.SemanticAnalyzer;
 import org.apache.hadoop.hive.ql.parse.TableSample;
 import org.apache.hadoop.hive.ql.plan.Explain.Level;
 
@@ -98,6 +98,8 @@ public class TableScanDesc extends AbstractOperatorDesc {
 
   private boolean isMetadataOnly = false;
 
+  private boolean isAcidTable;
+
   private transient TableSample tableSample;
 
   private transient Table tableMetadata;
@@ -123,6 +125,7 @@ public class TableScanDesc extends AbstractOperatorDesc {
     this.alias = alias;
     this.virtualCols = vcs;
     this.tableMetadata = tblMetadata;
+    isAcidTable = AcidUtils.isAcidTable(this.tableMetadata);
   }
 
   @Override
@@ -131,21 +134,38 @@ public class TableScanDesc extends AbstractOperatorDesc {
     return new TableScanDesc(getAlias(), vcs, this.tableMetadata);
   }
 
-  @Explain(displayName = "alias", explainLevels = { Level.USER, Level.DEFAULT, Level.EXTENDED })
+  @Explain(displayName = "alias")
   public String getAlias() {
     return alias;
   }
 
-  @Explain(displayName = "ACID table", explainLevels = { Level.USER }, displayOnlyOnTrue = true)
+  @Explain(explainLevels = { Level.USER })
+  public String getTbl() {
+    StringBuffer sb = new StringBuffer();
+    sb.append(this.tableMetadata.getCompleteName());
+    sb.append("," + alias);
+    if (isAcidTable()) {
+      sb.append(", ACID table");
+    }
+    sb.append(",Tbl:");
+    sb.append(this.statistics.getBasicStatsState());
+    sb.append(",Col:");
+    sb.append(this.statistics.getColumnStatsState());
+    return sb.toString();
+  }
+
   public boolean isAcidTable() {
-    return SemanticAnalyzer.isAcidTable(this.tableMetadata);
+    return isAcidTable;
+  }
+
+  @Explain(displayName = "Output", explainLevels = { Level.USER })
+  public List<String> getOutputColumnNames() {
+    return this.neededColumns;
   }
 
   @Explain(displayName = "filterExpr")
   public String getFilterExprString() {
-    StringBuilder sb = new StringBuilder();
-    PlanUtils.addExprToStringBuffer(filterExpr, sb);
-    return sb.toString();
+    return PlanUtils.getExprListString(Arrays.asList(filterExpr));
   }
 
   public ExprNodeGenericFuncDesc getFilterExpr() {
