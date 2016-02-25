@@ -1093,7 +1093,8 @@ public class Driver implements CommandProcessor {
     try {
       cpr = runInternal(command, alreadyCompiled);
     } finally {
-      releaseResources();
+      System.out.println("not releasing");
+//      releaseResources();
     }
 
     if(cpr.getResponseCode() == 0) {

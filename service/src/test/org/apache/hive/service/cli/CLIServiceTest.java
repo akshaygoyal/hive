@@ -636,18 +636,12 @@ public abstract class CLIServiceTest {
   @Test
   public void testTaskStatus() throws Exception {
     HashMap<String, String> confOverlay = new HashMap<String, String>();
-    SessionHandle sessionHandle = client.openSession("tom", "password",
-      new HashMap<String, String>());
+    String tableName = "TEST_EXEC_ASYNC";
+    String columnDefinitions = "(ID STRING)";
+
+    // Open a session and set up the test data
+    SessionHandle sessionHandle = setupTestData(tableName, columnDefinitions, confOverlay);
     assertNotNull(sessionHandle);
-
-    // Change lock manager, otherwise unit-test doesn't go through
-    String setLockMgr = "SET hive.lock.manager=" +
-      "org.apache.hadoop.hive.ql.lockmgr.EmbeddedLockManager";
-    client.executeStatement(sessionHandle, setLockMgr, confOverlay);
-
-    String createTable = "CREATE TABLE TEST_EXEC_ASYNC(ID STRING)";
-    client.executeStatement(sessionHandle, createTable, confOverlay);
-
     // nonblocking execute
     String select = "SELECT ID FROM TEST_EXEC_ASYNC";
     OperationHandle ophandle =
