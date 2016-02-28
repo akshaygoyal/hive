@@ -679,6 +679,7 @@ public abstract class ThriftCLIService extends AbstractService implements TCLISe
           new OperationHandle(req.getOperationHandle()));
       resp.setOperationState(operationStatus.getState().toTOperationState());
       HiveSQLException opException = operationStatus.getOperationException();
+      resp.setTaskStatus(operationStatus.getTaskStatus());
       if (opException != null) {
         resp.setSqlState(opException.getSQLState());
         resp.setErrorCode(opException.getErrorCode());

@@ -142,6 +142,7 @@ public class Driver implements CommandProcessor {
   private Throwable downstreamError;
 
   private FetchTask fetchTask;
+  private ArrayList<Task<? extends Serializable>> rootTasks;
   List<HiveLock> hiveLocks = new ArrayList<HiveLock>();
 
   // A list of FileSinkOperators writing in an ACID compliant manner
@@ -1085,6 +1086,7 @@ public class Driver implements CommandProcessor {
 
     if (plan != null) {
       fetchTask = plan.getFetchTask();
+      rootTasks = plan.getRootTasks();
       if (fetchTask != null) {
         fetchTask.setDriverContext(null);
         fetchTask.setQueryPlan(null);
@@ -1115,8 +1117,7 @@ public class Driver implements CommandProcessor {
     try {
       cpr = runInternal(command, alreadyCompiled);
     } finally {
-      System.out.println("not releasing");
-//      releaseResources();
+      releaseResources();
     }
 
     if(cpr.getResponseCode() == 0) {
@@ -1992,13 +1993,15 @@ public class Driver implements CommandProcessor {
   public void setOperationId(String opId) {
     this.operationId = opId;
   }
-
-  public List<TaskStatus> getTaskStatuses() {
-    if (plan == null) {
-      return null;
+  public ArrayList<Task<? extends Serializable>> getRootTasks() {
+    if (plan != null) {
+      rootTasks = plan.getRootTasks();
     }
+    return rootTasks;
+  }
+  public List<TaskStatus> getTaskStatuses() {
     List<Task<?>> tasks = new ArrayList<Task<?>>();
-    tasks.addAll(plan.getRootTasks());
+    tasks.addAll(getRootTasks());
     for (int i = 0; i < tasks.size(); i++) {
       Task<?> tsk = tasks.get(i);
       if (tsk.getDependentTasks() != null) {
