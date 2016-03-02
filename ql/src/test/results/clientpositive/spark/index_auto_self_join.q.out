@@ -43,7 +43,7 @@ STAGE PLANS:
                   alias: a
                   Statistics: Num rows: 500 Data size: 5312 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: (((UDFToDouble(key) < 90.0) and (UDFToDouble(key) > 70.0)) and value is not null) (type: boolean)
+                    predicate: (((UDFToDouble(key) > 70.0) and (UDFToDouble(key) < 90.0)) and value is not null) (type: boolean)
                     Statistics: Num rows: 55 Data size: 584 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: key (type: string), value (type: string)
@@ -73,8 +73,8 @@ STAGE PLANS:
                     compressed: false
                     Statistics: Num rows: 60 Data size: 642 Basic stats: COMPLETE Column stats: NONE
                     table:
-                        input format: org.apache.hadoop.mapred.TextInputFormat
-                        output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                        input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                        output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                         serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -160,10 +160,10 @@ STAGE PLANS:
             Map Operator Tree:
                 TableScan
                   alias: a
-                  filterExpr: (((UDFToDouble(key) < 90.0) and (UDFToDouble(key) > 70.0)) and value is not null) (type: boolean)
+                  filterExpr: (((UDFToDouble(key) > 70.0) and (UDFToDouble(key) < 90.0)) and value is not null) (type: boolean)
                   Statistics: Num rows: 500 Data size: 5312 Basic stats: COMPLETE Column stats: NONE
                   Filter Operator
-                    predicate: (((UDFToDouble(key) < 90.0) and (UDFToDouble(key) > 70.0)) and value is not null) (type: boolean)
+                    predicate: (((UDFToDouble(key) > 70.0) and (UDFToDouble(key) < 90.0)) and value is not null) (type: boolean)
                     Statistics: Num rows: 55 Data size: 584 Basic stats: COMPLETE Column stats: NONE
                     Select Operator
                       expressions: key (type: string), value (type: string)
@@ -193,8 +193,8 @@ STAGE PLANS:
                     compressed: false
                     Statistics: Num rows: 60 Data size: 642 Basic stats: COMPLETE Column stats: NONE
                     table:
-                        input format: org.apache.hadoop.mapred.TextInputFormat
-                        output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                        input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                        output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                         serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0

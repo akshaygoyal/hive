@@ -36,6 +36,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.mapreduce.MRJobConfig;
@@ -53,7 +54,6 @@ import org.apache.hadoop.hive.metastore.api.Schema;
 import org.apache.hadoop.hive.ql.exec.ConditionalTask;
 import org.apache.hadoop.hive.ql.exec.ExplainTask;
 import org.apache.hadoop.hive.ql.exec.FetchTask;
-import org.apache.hadoop.hive.ql.exec.Operator;
 import org.apache.hadoop.hive.ql.exec.TableScanOperator;
 import org.apache.hadoop.hive.ql.exec.Task;
 import org.apache.hadoop.hive.ql.exec.TaskFactory;
@@ -142,10 +142,13 @@ public class Driver implements CommandProcessor {
   private Throwable downstreamError;
 
   private FetchTask fetchTask;
+  private ArrayList<Task<? extends Serializable>> rootTasks;
   List<HiveLock> hiveLocks = new ArrayList<HiveLock>();
 
   // A list of FileSinkOperators writing in an ACID compliant manner
   private Set<FileSinkDesc> acidSinks;
+  // whether any ACID table is involved in a query
+  private boolean acidInQuery;
 
   // A limit on the number of threads that can be launched
   private int maxthreads;
@@ -157,6 +160,9 @@ public class Driver implements CommandProcessor {
 
   // HS2 operation handle guid string
   private String operationId;
+
+  // For WebUI.  Kept alive after queryPlan is freed.
+  private final QueryDisplay queryDisplay = new QueryDisplay();
 
   private boolean checkConcurrency() {
     boolean supportConcurrency = conf.getBoolVar(HiveConf.ConfVars.HIVE_SUPPORT_CONCURRENCY);
@@ -405,6 +411,10 @@ public class Driver implements CommandProcessor {
       conf.setVar(HiveConf.ConfVars.HIVEQUERYID, queryId);
     }
 
+    //save some info for webUI for use after plan is freed
+    this.queryDisplay.setQueryStr(queryStr);
+    this.queryDisplay.setQueryId(queryId);
+
     LOG.info("Compiling command(queryId=" + queryId + "): " + queryStr);
 
     SessionState.get().setupQueryCurrentTimestamp();
@@ -466,7 +476,7 @@ public class Driver implements CommandProcessor {
         sem.analyze(tree, ctx);
         hookCtx.update(sem);
         for (HiveSemanticAnalyzerHook hook : saHooks) {
-          hook.postAnalyze(hookCtx, sem.getRootTasks());
+          hook.postAnalyze(hookCtx, sem.getAllRootTasks());
         }
       } else {
         sem.analyze(tree, ctx);
@@ -479,6 +489,7 @@ public class Driver implements CommandProcessor {
 
       // validate the plan
       sem.validate();
+      acidInQuery = sem.hasAcidInQuery();
       perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.ANALYZE);
 
       // get the output schema
@@ -515,11 +526,17 @@ public class Driver implements CommandProcessor {
         }
       }
 
-      if (conf.getBoolVar(ConfVars.HIVE_LOG_EXPLAIN_OUTPUT)) {
+      if (conf.getBoolVar(ConfVars.HIVE_LOG_EXPLAIN_OUTPUT) ||
+           conf.isWebUiQueryInfoCacheEnabled()) {
         String explainOutput = getExplainOutput(sem, plan, tree);
         if (explainOutput != null) {
-          LOG.info("EXPLAIN output for queryid " + queryId + " : "
+          if (conf.getBoolVar(ConfVars.HIVE_LOG_EXPLAIN_OUTPUT)) {
+            LOG.info("EXPLAIN output for queryid " + queryId + " : "
               + explainOutput);
+          }
+          if (conf.isWebUiQueryInfoCacheEnabled()) {
+            queryDisplay.setExplainPlan(explainOutput);
+          }
         }
       }
       return 0;
@@ -537,6 +554,10 @@ public class Driver implements CommandProcessor {
         errorMessage += " " + e.getMessage();
       }
 
+      if (error == ErrorMsg.TXNMGR_NOT_ACID) {
+        errorMessage += ". Failed command: " + queryStr;
+      }
+
       SQLState = error.getSQLState();
       downstreamError = e;
       console.printError(errorMessage, "\n"
@@ -545,18 +566,20 @@ public class Driver implements CommandProcessor {
       // since it exceeds valid range of shell return values
     } finally {
       double duration = perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.COMPILE)/1000.00;
-      dumpMetaCallTimingWithoutEx("compilation");
+      ImmutableMap<String, Long> compileHMSTimings = dumpMetaCallTimingWithoutEx("compilation");
+      queryDisplay.setHmsTimings(QueryDisplay.Phase.COMPILATION, compileHMSTimings);
       restoreSession(queryState);
       LOG.info("Completed compiling command(queryId=" + queryId + "); Time taken: " + duration + " seconds");
     }
   }
 
-  private void dumpMetaCallTimingWithoutEx(String phase) {
+  private ImmutableMap<String, Long> dumpMetaCallTimingWithoutEx(String phase) {
     try {
-      Hive.get().dumpAndClearMetaCallTiming(phase);
+      return Hive.get().dumpAndClearMetaCallTiming(phase);
     } catch (HiveException he) {
       LOG.warn("Caught exception attempting to write metadata call information " + he, he);
     }
+    return null;
   }
 
   /**
@@ -576,7 +599,7 @@ public class Driver implements CommandProcessor {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     PrintStream ps = new PrintStream(baos);
     try {
-      List<Task<?>> rootTasks = sem.getRootTasks();
+      List<Task<?>> rootTasks = sem.getAllRootTasks();
       task.getJSONPlan(ps, astTree, rootTasks, sem.getFetchTask(), false, true, true);
       ret = baos.toString();
     } catch (Exception e) {
@@ -982,12 +1005,12 @@ public class Driver implements CommandProcessor {
       For multi-stmt txns this is not sufficient and will be managed via WriteSet tracking
       in the lock manager.*/
       txnMgr.acquireLocks(plan, ctx, userFromUGI);
-      if(initiatingTransaction || readOnlyQueryInAutoCommit) {
+      if(initiatingTransaction || (readOnlyQueryInAutoCommit && acidInQuery)) {
         //For multi-stmt txns we should record the snapshot when txn starts but
         // don't update it after that until txn completes.  Thus the check for {@code initiatingTransaction}
         //For autoCommit=true, Read-only statements, txn is implicit, i.e. lock in the snapshot
         //for each statement.
-        recordValidTxns();//todo: we should only need to do this for RO query if it has ACID resources in it.
+        recordValidTxns();
       }
 
       return 0;
@@ -1063,6 +1086,7 @@ public class Driver implements CommandProcessor {
 
     if (plan != null) {
       fetchTask = plan.getFetchTask();
+      rootTasks = plan.getRootTasks();
       if (fetchTask != null) {
         fetchTask.setDriverContext(null);
         fetchTask.setQueryPlan(null);
@@ -1178,6 +1202,13 @@ public class Driver implements CommandProcessor {
             + org.apache.hadoop.util.StringUtils.stringifyException(e));
       }
     }
+
+    //Save compile-time PerfLogging for WebUI.
+    //Execution-time Perf logs are done by either another thread's PerfLogger
+    //or a reset PerfLogger.
+    PerfLogger perfLogger = SessionState.getPerfLogger();
+    queryDisplay.setPerfLogStarts(QueryDisplay.Phase.COMPILATION, perfLogger.getStartTimes());
+    queryDisplay.setPerfLogEnds(QueryDisplay.Phase.COMPILATION, perfLogger.getEndTimes());
     return ret;
   }
 
@@ -1335,6 +1366,8 @@ public class Driver implements CommandProcessor {
     }
 
     perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DRIVER_RUN);
+    queryDisplay.setPerfLogStarts(QueryDisplay.Phase.EXECUTION, perfLogger.getStartTimes());
+    queryDisplay.setPerfLogEnds(QueryDisplay.Phase.EXECUTION, perfLogger.getEndTimes());
 
     // Take all the driver run hooks and post-execute them.
     try {
@@ -1406,6 +1439,7 @@ public class Driver implements CommandProcessor {
   }
 
   private CommandProcessorResponse createProcessorResponse(int ret) {
+    queryDisplay.setErrorMessage(errorMessage);
     return new CommandProcessorResponse(ret, errorMessage, SQLState, downstreamError);
   }
 
@@ -1536,6 +1570,7 @@ public class Driver implements CommandProcessor {
         // Launch upto maxthreads tasks
         Task<? extends Serializable> task;
         while ((task = driverCxt.getRunnable(maxthreads)) != null) {
+          queryDisplay.addTask(task);
           TaskRunner runner = launchTask(task, queryId, noName, jobname, jobs, driverCxt);
           if (!runner.isRunning()) {
             break;
@@ -1548,6 +1583,7 @@ public class Driver implements CommandProcessor {
           continue;
         }
         hookContext.addCompleteTask(tskRun);
+        queryDisplay.setTaskCompleted(tskRun.getTask().getId(), tskRun.getTaskResult());
 
         Task<? extends Serializable> tsk = tskRun.getTask();
         TaskResult result = tskRun.getTaskResult();
@@ -1686,8 +1722,10 @@ public class Driver implements CommandProcessor {
       if (noName) {
         conf.set(MRJobConfig.JOB_NAME, "");
       }
-      dumpMetaCallTimingWithoutEx("execution");
       double duration = perfLogger.PerfLogEnd(CLASS_NAME, PerfLogger.DRIVER_EXECUTE)/1000.00;
+
+      ImmutableMap<String, Long> executionHMSTimings = dumpMetaCallTimingWithoutEx("execution");
+      queryDisplay.setHmsTimings(QueryDisplay.Phase.EXECUTION, executionHMSTimings);
 
       Map<String, MapRedStats> stats = SessionState.get().getMapRedStats();
       if (stats != null && !stats.isEmpty()) {
@@ -1943,6 +1981,11 @@ public class Driver implements CommandProcessor {
     return errorMessage;
   }
 
+
+  public QueryDisplay getQueryDisplay() {
+    return queryDisplay;
+  }
+
   /**
    * Set the HS2 operation handle's guid string
    * @param opId base64 encoded guid string
@@ -1950,13 +1993,15 @@ public class Driver implements CommandProcessor {
   public void setOperationId(String opId) {
     this.operationId = opId;
   }
-
-  public List<TaskStatus> getTaskStatuses() {
-    if (plan == null) {
-      return null;
+  public ArrayList<Task<? extends Serializable>> getRootTasks() {
+    if (plan != null) {
+      rootTasks = plan.getRootTasks();
     }
+    return rootTasks;
+  }
+  public List<TaskStatus> getTaskStatuses() {
     List<Task<?>> tasks = new ArrayList<Task<?>>();
-    tasks.addAll(plan.getRootTasks());
+    tasks.addAll(getRootTasks());
     for (int i = 0; i < tasks.size(); i++) {
       Task<?> tsk = tasks.get(i);
       if (tsk.getDependentTasks() != null) {

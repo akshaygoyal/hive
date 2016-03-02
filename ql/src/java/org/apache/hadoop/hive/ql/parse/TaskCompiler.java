@@ -108,7 +108,7 @@ public abstract class TaskCompiler {
      */
     if (pCtx.getQueryProperties().isQuery() && !isCStats) {
       if ((!loadTableWork.isEmpty()) || (loadFileWork.size() != 1)) {
-        throw new SemanticException(ErrorMsg.GENERIC_ERROR.getMsg());
+        throw new SemanticException(ErrorMsg.INVALID_LOAD_TABLE_FILE_WORK.getMsg());
       }
 
       LoadFileDesc loadFileDesc = loadFileWork.get(0);
@@ -228,7 +228,7 @@ public abstract class TaskCompiler {
 
     decideExecMode(rootTasks, ctx, globalLimitCtx);
 
-    if (pCtx.getQueryProperties().isCTAS()) {
+    if (pCtx.getQueryProperties().isCTAS() && !pCtx.getCreateTable().isMaterialization()) {
       // generate a DDL task and make it a dependent task of the leaf
       CreateTableDesc crtTblDesc = pCtx.getCreateTable();
 

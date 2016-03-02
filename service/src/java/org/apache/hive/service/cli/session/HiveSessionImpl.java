@@ -111,15 +111,15 @@ public class HiveSessionImpl implements HiveSession {
   private volatile long lastAccessTime;
   private volatile long lastIdleTime;
 
-  public HiveSessionImpl(TProtocolVersion protocol, String username, String password,
-      HiveConf serverhiveConf, String ipAddress) {
+
+  public HiveSessionImpl(SessionHandle sessionHandle, TProtocolVersion protocol, String username, String password,
+    HiveConf serverhiveConf, String ipAddress) {
     this.username = username;
     this.password = password;
     creationTime = System.currentTimeMillis();
-    this.sessionHandle = new SessionHandle(protocol);
+    this.sessionHandle = sessionHandle != null ? sessionHandle : new SessionHandle(protocol);
     this.hiveConf = new HiveConf(serverhiveConf);
     this.ipAddress = ipAddress;
-
     try {
       // In non-impersonation mode, map scheduler queue to current user
       // if fair scheduler is configured.
@@ -132,12 +132,18 @@ public class HiveSessionImpl implements HiveSession {
     }
     // Set an explicit session name to control the download directory name
     hiveConf.set(ConfVars.HIVESESSIONID.varname,
-        sessionHandle.getHandleIdentifier().toString());
+        this.sessionHandle.getHandleIdentifier().toString());
     // Use thrift transportable formatter
     hiveConf.set(ListSinkOperator.OUTPUT_FORMATTER,
         FetchFormatter.ThriftFormatter.class.getName());
     hiveConf.setInt(ListSinkOperator.OUTPUT_PROTOCOL, protocol.getValue());
   }
+
+  public HiveSessionImpl(TProtocolVersion protocol, String username, String password,
+    HiveConf serverhiveConf, String ipAddress) {
+    this(null, protocol, username, password, serverhiveConf, ipAddress);
+  }
+
 
   @Override
   /**
@@ -681,6 +687,8 @@ public class HiveSessionImpl implements HiveSession {
     if (isOperationLogEnabled) {
       try {
         FileUtils.forceDelete(sessionLogDir);
+        LOG.info("Operation log session directory is deleted: "
+            + sessionLogDir.getAbsolutePath());
       } catch (Exception e) {
         LOG.error("Failed to cleanup session log dir: " + sessionHandle, e);
       }

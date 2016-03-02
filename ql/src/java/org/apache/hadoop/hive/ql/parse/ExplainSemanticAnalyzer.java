@@ -75,11 +75,11 @@ public class ExplainSemanticAnalyzer extends BaseSemanticAnalyzer {
     sem.validate();
 
     ctx.setResFile(ctx.getLocalTmpPath());
-    List<Task<? extends Serializable>> tasks = sem.getRootTasks();
+    List<Task<? extends Serializable>> tasks = sem.getAllRootTasks();
     if (tasks == null) {
       tasks = Collections.emptyList();
     }
-    
+
     FetchTask fetchTask = sem.getFetchTask();
     if (fetchTask != null) {
       // Initialize fetch work such that operator tree will be constructed.

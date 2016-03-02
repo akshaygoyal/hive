@@ -128,16 +128,20 @@ public class HBaseReadWrite implements MetadataStore {
     columnFamilies.put(FILE_METADATA_TABLE, Arrays.asList(CATALOG_CF, STATS_CF));
   }
 
+  final static byte[] MASTER_KEY_SEQUENCE = "master_key".getBytes(HBaseUtils.ENCODING);
+  // The change version functionality uses the sequences table, but we don't want to give the
+  // caller complete control over the sequence name as they might inadvertently clash with one of
+  // our sequence keys, so add a prefix to their topic name.
+  final static String CHANGE_VERSION_SEQUENCE_PREFIX = "cv_";
+
   final static byte[] AGGR_STATS_BLOOM_COL = "b".getBytes(HBaseUtils.ENCODING);
   private final static byte[] AGGR_STATS_STATS_COL = "s".getBytes(HBaseUtils.ENCODING);
-  final static byte[] MASTER_KEY_SEQUENCE = "mk".getBytes(HBaseUtils.ENCODING);
   private final static byte[] CATALOG_COL = "c".getBytes(HBaseUtils.ENCODING);
   private final static byte[] ROLES_COL = "roles".getBytes(HBaseUtils.ENCODING);
   private final static byte[] REF_COUNT_COL = "ref".getBytes(HBaseUtils.ENCODING);
   private final static byte[] DELEGATION_TOKEN_COL = "dt".getBytes(HBaseUtils.ENCODING);
   private final static byte[] MASTER_KEY_COL = "mk".getBytes(HBaseUtils.ENCODING);
   private final static byte[] GLOBAL_PRIVS_KEY = "gp".getBytes(HBaseUtils.ENCODING);
-  private final static byte[] SEQUENCES_KEY = "seq".getBytes(HBaseUtils.ENCODING);
   private final static int TABLES_TO_CACHE = 10;
   // False positives are very bad here because they cause us to invalidate entries we shouldn't.
   // Space used and # of hash functions grows in proportion to ln of num bits so a 10x increase
@@ -2136,6 +2140,24 @@ public class HBaseReadWrite implements MetadataStore {
     colStats.setStatsDesc(csd);
     return colStats;
   }
+
+  /**********************************************************************************************
+   * Change version related methods
+   *********************************************************************************************/
+
+  public long getChangeVersion(String topic) throws IOException {
+    byte[] key = HBaseUtils.buildKey(CHANGE_VERSION_SEQUENCE_PREFIX + topic);
+    return peekAtSequence(key);
+  }
+
+  // TODO: The way this is called now is not ideal. It's all encapsulated and stuff, but,
+  //       before the txns (consistent HBase writes) are properly implemented, we should at least
+  //       put this in the same RPC with real updates. But there are no guarantees anyway, so...
+  public void incrementChangeVersion(String topic) throws IOException {
+    byte[] key = HBaseUtils.buildKey(CHANGE_VERSION_SEQUENCE_PREFIX + topic);
+    getNextSequence(key);
+  }
+
   /**********************************************************************************************
    * File metadata related methods
    *********************************************************************************************/
@@ -2371,14 +2393,19 @@ public class HBaseReadWrite implements MetadataStore {
    * Sequence methods
    *********************************************************************************************/
 
+  long peekAtSequence(byte[] sequence) throws IOException {
+    byte[] serialized = read(SEQUENCES_TABLE, sequence, CATALOG_CF, CATALOG_COL);
+    return serialized == null ? 0 : Long.valueOf(new String(serialized, HBaseUtils.ENCODING));
+  }
+
   long getNextSequence(byte[] sequence) throws IOException {
-    byte[] serialized = read(SEQUENCES_TABLE, SEQUENCES_KEY, CATALOG_CF, sequence);
+    byte[] serialized = read(SEQUENCES_TABLE, sequence, CATALOG_CF, CATALOG_COL);
     long val = 0;
     if (serialized != null) {
       val = Long.valueOf(new String(serialized, HBaseUtils.ENCODING));
     }
     byte[] incrSerialized = new Long(val + 1).toString().getBytes(HBaseUtils.ENCODING);
-    store(SEQUENCES_TABLE, SEQUENCES_KEY, CATALOG_CF, sequence, incrSerialized);
+    store(SEQUENCES_TABLE, sequence, CATALOG_CF, CATALOG_COL, incrSerialized);
     return val;
   }
 
@@ -2389,16 +2416,18 @@ public class HBaseReadWrite implements MetadataStore {
    */
   List<String> printSequences() throws IOException {
     HTableInterface htab = conn.getHBaseTable(SEQUENCES_TABLE);
-    Get g = new Get(SEQUENCES_KEY);
-    g.addFamily(CATALOG_CF);
-    Result result = htab.get(g);
-    if (result.isEmpty()) return Arrays.asList("No sequences");
-    List<String> lines = new ArrayList<>();
-    for (Map.Entry<byte[], byte[]> entry : result.getFamilyMap(CATALOG_CF).entrySet()) {
-      lines.add(new String(entry.getKey(), HBaseUtils.ENCODING) + ": " +
-        new String(entry.getValue(), HBaseUtils.ENCODING));
+    Iterator<Result> iter =
+        scan(SEQUENCES_TABLE, CATALOG_CF, CATALOG_COL, null);
+    List<String> sequences = new ArrayList<>();
+    if (!iter.hasNext()) return Arrays.asList("No sequences");
+    while (iter.hasNext()) {
+      Result result = iter.next();
+      sequences.add(new StringBuilder(new String(result.getRow(), HBaseUtils.ENCODING))
+          .append(": ")
+          .append(new String(result.getValue(CATALOG_CF, CATALOG_COL), HBaseUtils.ENCODING))
+          .toString());
     }
-    return lines;
+    return sequences;
   }
 
   /**********************************************************************************************

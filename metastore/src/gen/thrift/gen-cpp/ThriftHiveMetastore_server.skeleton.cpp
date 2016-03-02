@@ -332,6 +332,11 @@ class ThriftHiveMetastoreHandler : virtual public ThriftHiveMetastoreIf {
     printf("alter_partitions\n");
   }
 
+  void alter_partitions_with_environment_context(const std::string& db_name, const std::string& tbl_name, const std::vector<Partition> & new_parts, const EnvironmentContext& environment_context) {
+    // Your implementation goes here
+    printf("alter_partitions_with_environment_context\n");
+  }
+
   void alter_partition_with_environment_context(const std::string& db_name, const std::string& tbl_name, const Partition& new_part, const EnvironmentContext& environment_context) {
     // Your implementation goes here
     printf("alter_partition_with_environment_context\n");
@@ -685,6 +690,11 @@ class ThriftHiveMetastoreHandler : virtual public ThriftHiveMetastoreIf {
   void cache_file_metadata(CacheFileMetadataResult& _return, const CacheFileMetadataRequest& req) {
     // Your implementation goes here
     printf("cache_file_metadata\n");
+  }
+
+  void get_change_version(GetChangeVersionResult& _return, const GetChangeVersionRequest& req) {
+    // Your implementation goes here
+    printf("get_change_version\n");
   }
 
 };

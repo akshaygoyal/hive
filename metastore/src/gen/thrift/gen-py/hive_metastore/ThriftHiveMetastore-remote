@@ -86,6 +86,7 @@ if len(sys.argv) <= 1 or sys.argv[1] == '--help':
   print('   get_partitions_by_names(string db_name, string tbl_name,  names)')
   print('  void alter_partition(string db_name, string tbl_name, Partition new_part)')
   print('  void alter_partitions(string db_name, string tbl_name,  new_parts)')
+  print('  void alter_partitions_with_environment_context(string db_name, string tbl_name,  new_parts, EnvironmentContext environment_context)')
   print('  void alter_partition_with_environment_context(string db_name, string tbl_name, Partition new_part, EnvironmentContext environment_context)')
   print('  void rename_partition(string db_name, string tbl_name,  part_vals, Partition new_part)')
   print('  bool partition_name_has_valid_characters( part_vals, bool throw_exception)')
@@ -157,6 +158,7 @@ if len(sys.argv) <= 1 or sys.argv[1] == '--help':
   print('  PutFileMetadataResult put_file_metadata(PutFileMetadataRequest req)')
   print('  ClearFileMetadataResult clear_file_metadata(ClearFileMetadataRequest req)')
   print('  CacheFileMetadataResult cache_file_metadata(CacheFileMetadataRequest req)')
+  print('  GetChangeVersionResult get_change_version(GetChangeVersionRequest req)')
   print('  string getName()')
   print('  string getVersion()')
   print('  fb_status getStatus()')
@@ -598,6 +600,12 @@ elif cmd == 'alter_partitions':
     sys.exit(1)
   pp.pprint(client.alter_partitions(args[0],args[1],eval(args[2]),))
 
+elif cmd == 'alter_partitions_with_environment_context':
+  if len(args) != 4:
+    print('alter_partitions_with_environment_context requires 4 args')
+    sys.exit(1)
+  pp.pprint(client.alter_partitions_with_environment_context(args[0],args[1],eval(args[2]),eval(args[3]),))
+
 elif cmd == 'alter_partition_with_environment_context':
   if len(args) != 4:
     print('alter_partition_with_environment_context requires 4 args')
@@ -1023,6 +1031,12 @@ elif cmd == 'cache_file_metadata':
     print('cache_file_metadata requires 1 args')
     sys.exit(1)
   pp.pprint(client.cache_file_metadata(eval(args[0]),))
+
+elif cmd == 'get_change_version':
+  if len(args) != 1:
+    print('get_change_version requires 1 args')
+    sys.exit(1)
+  pp.pprint(client.get_change_version(eval(args[0]),))
 
 elif cmd == 'getName':
   if len(args) != 0:

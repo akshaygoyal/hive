@@ -464,6 +464,12 @@ public final class FunctionRegistry {
     system.registerTableFunction(NOOP_STREAMING_MAP_TABLE_FUNCTION, NoopWithMapStreamingResolver.class);
     system.registerTableFunction(WINDOWING_TABLE_FUNCTION, WindowingTableFunctionResolver.class);
     system.registerTableFunction(MATCH_PATH_TABLE_FUNCTION, MatchPathResolver.class);
+
+    // Arithmetic specializations are done in a convoluted manner; mark them as built-in.
+    system.registerHiddenBuiltIn(GenericUDFOPDTIMinus.class);
+    system.registerHiddenBuiltIn(GenericUDFOPDTIPlus.class);
+    system.registerHiddenBuiltIn(GenericUDFOPNumericMinus.class);
+    system.registerHiddenBuiltIn(GenericUDFOPNumericPlus.class);
   }
 
   public static String getNormalizedFunctionName(String fn) throws SemanticException {
@@ -1474,6 +1480,21 @@ public final class FunctionRegistry {
     return system.registerPermanentFunction(functionName, className, registerToSession, resources);
   }
 
+  public static boolean isPermanentFunction(ExprNodeGenericFuncDesc fnExpr) {
+    GenericUDF udf = fnExpr.getGenericUDF();
+    if (udf == null) return false;
+
+    Class<?> clazz = udf.getClass();
+    if (udf instanceof GenericUDFBridge) {
+      clazz = ((GenericUDFBridge)udf).getUdfClass();
+    }
+
+    if (clazz != null) {
+      return system.isPermanentFunc(clazz);
+    }
+    return false;
+  }
+
   public static void unregisterPermanentFunction(String functionName) throws HiveException {
     system.unregisterFunction(functionName);
     unregisterTemporaryUDF(functionName);
@@ -1597,6 +1618,11 @@ public final class FunctionRegistry {
       return system.isBuiltInFunc(clazz);
     }
     return false;
+  }
+
+  /** Unlike isBuiltInFuncExpr, does not expand GenericUdfBridge. */
+  public static boolean isBuiltInFuncClass(Class<?> clazz) {
+    return system.isBuiltInFunc(clazz);
   }
 
   /**

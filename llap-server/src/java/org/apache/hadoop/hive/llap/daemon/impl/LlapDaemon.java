@@ -19,7 +19,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.MemoryType;
 import java.net.InetSocketAddress;
-import java.net.URLClassLoader;
+import java.net.URL;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,7 +30,7 @@ import javax.management.ObjectName;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
-import org.apache.hadoop.hive.llap.configuration.LlapConfiguration;
+import org.apache.hadoop.hive.llap.configuration.LlapDaemonConfiguration;
 import org.apache.hadoop.hive.llap.daemon.ContainerRunner;
 import org.apache.hadoop.hive.llap.daemon.QueryFailedHandler;
 import org.apache.hadoop.hive.llap.daemon.rpc.LlapDaemonProtocolProtos.QueryCompleteRequestProto;
@@ -48,13 +48,17 @@ import org.apache.hadoop.hive.llap.metrics.LlapMetricsSystem;
 import org.apache.hadoop.hive.llap.metrics.MetricsUtils;
 import org.apache.hadoop.hive.llap.registry.impl.LlapRegistryService;
 import org.apache.hadoop.hive.llap.shufflehandler.ShuffleHandler;
-import org.apache.hadoop.hive.ql.exec.Utilities;
+import org.apache.hadoop.hive.ql.exec.SerializationUtilities;
+import org.apache.hadoop.hive.ql.exec.UDF;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDF;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDFBridge;
 import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.util.ExitUtil;
 import org.apache.hadoop.util.JvmPauseMonitor;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hive.common.util.ShutdownHookManager;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,8 +70,9 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
 
   private static final Logger LOG = LoggerFactory.getLogger(LlapDaemon.class);
 
+  public static final String LOG4j2_PROPERTIES_FILE = "llap-daemon-log4j2.properties";
   private final Configuration shuffleHandlerConf;
-  private final LlapDaemonProtocolServerImpl server;
+  private final LlapProtocolServerImpl server;
   private final ContainerRunnerImpl containerRunner;
   private final AMReporter amReporter;
   private final LlapRegistryService registry;
@@ -96,6 +101,8 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
       int mngPort, int shufflePort) {
     super("LlapDaemon");
 
+    initializeLogging();
+
     printAsciiArt();
 
     Preconditions.checkArgument(numExecutors > 0);
@@ -107,6 +114,14 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
         "Work dirs must be specified");
     Preconditions.checkArgument(shufflePort == 0 || (shufflePort > 1024 && shufflePort < 65536),
         "Shuffle Port must be betwee 1024 and 65535, or 0 for automatic selection");
+    String hosts = HiveConf.getTrimmedVar(daemonConf, ConfVars.LLAP_DAEMON_SERVICE_HOSTS);
+    if (hosts.startsWith("@")) {
+      String zkHosts = HiveConf.getTrimmedVar(daemonConf, ConfVars.HIVE_ZOOKEEPER_QUORUM);
+      LOG.info("Zookeeper Quorum: {}", zkHosts);
+      Preconditions.checkArgument(zkHosts != null && !zkHosts.trim().isEmpty(),
+          "LLAP service hosts startswith '@' but hive.zookeeper.quorum is not set." +
+              " hive.zookeeper.quorum must be set.");
+    }
 
     this.maxJvmMemory = getTotalHeapSize();
     this.llapIoEnabled = ioEnabled;
@@ -151,6 +166,20 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
     // Less frequently set parameter, not passing in as a param.
     int numHandlers = HiveConf.getIntVar(daemonConf, ConfVars.LLAP_DAEMON_RPC_NUM_HANDLERS);
 
+    // Initialize the function localizer.
+    ClassLoader executorClassLoader = null;
+    if (HiveConf.getBoolVar(daemonConf, ConfVars.LLAP_DAEMON_ALLOW_PERMANENT_FNS)) {
+      this.fnLocalizer = new FunctionLocalizer(daemonConf, localDirs[0]);
+      executorClassLoader = fnLocalizer.getClassLoader();
+      // Set up the hook that will disallow creating non-whitelisted UDFs anywhere in the plan.
+      // We are not using a specific hook for GenericUDFBridge - that doesn't work in MiniLlap
+      // because the daemon is embedded, so the client also gets this hook and Kryo is brittle.
+      SerializationUtilities.setGlobalHook(new LlapGlobalUdfChecker(fnLocalizer));
+    } else {
+      this.fnLocalizer = null;
+      executorClassLoader = Thread.currentThread().getContextClassLoader();
+    }
+
     // Initialize the metrics system
     LlapMetricsSystem.initialize("LlapDaemon");
     this.pauseMonitor = new JvmPauseMonitor(daemonConf);
@@ -166,17 +195,8 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
 
     this.amReporter = new AMReporter(srvAddress, new QueryFailedHandlerProxy(), daemonConf);
 
-    this.server = new LlapDaemonProtocolServerImpl(
+    this.server = new LlapProtocolServerImpl(
         numHandlers, this, srvAddress, mngAddress, srvPort, mngPort);
-
-    ClassLoader executorClassLoader = null;
-    if (HiveConf.getBoolVar(daemonConf, ConfVars.LLAP_DAEMON_ALLOW_PERMANENT_FNS)) {
-      this.fnLocalizer = new FunctionLocalizer(daemonConf, localDirs[0]);
-      executorClassLoader = fnLocalizer.getClassLoader();
-    } else {
-      this.fnLocalizer = null;
-      executorClassLoader = Thread.currentThread().getContextClassLoader();
-    }
 
     this.containerRunner = new ContainerRunnerImpl(daemonConf, numExecutors, waitQueueSize,
         enablePreemption, localDirs, this.shufflePort, srvAddress, executorMemoryBytes, metrics,
@@ -196,6 +216,19 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
     // AMReporter after the server so that it gets the correct address. It knows how to deal with
     // requests before it is started.
     addIfService(amReporter);
+  }
+
+  private void initializeLogging() {
+    long start = System.currentTimeMillis();
+    URL llap_l4j2 = LlapDaemon.class.getClassLoader().getResource(LOG4j2_PROPERTIES_FILE);
+    if (llap_l4j2 != null) {
+      Configurator.initialize("LlapDaemonLog4j2", llap_l4j2.toString());
+      long end = System.currentTimeMillis();
+      LOG.info("LLAP daemon logging initialized from {} in {} ms", llap_l4j2, (end - start));
+    } else {
+      throw new RuntimeException("Log initialization failed." +
+          " Unable to locate " + LOG4j2_PROPERTIES_FILE + " file in classpath");
+    }
   }
 
   public static long getTotalHeapSize() {
@@ -295,7 +328,7 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
     try {
       // Cache settings will need to be setup in llap-daemon-site.xml - since the daemons don't read hive-site.xml
       // Ideally, these properties should be part of LlapDameonConf rather than HiveConf
-      LlapConfiguration daemonConf = new LlapConfiguration();
+      LlapDaemonConfiguration daemonConf = new LlapDaemonConfiguration();
       int numExecutors = HiveConf.getIntVar(daemonConf, ConfVars.LLAP_DAEMON_NUM_EXECUTORS);
 
       String localDirList = HiveConf.getVar(daemonConf, ConfVars.LLAP_DAEMON_WORK_DIRS);
@@ -411,6 +444,39 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
     return maxJvmMemory;
   }
 
+  /**
+   * A global hook that checks all subclasses of GenericUDF against the whitelist. It also injects
+   * us into GenericUDFBridge-s, to check with the whitelist before instantiating a UDF.
+   */
+  private static final class LlapGlobalUdfChecker extends SerializationUtilities.Hook {
+    private FunctionLocalizer fnLocalizer;
+    public LlapGlobalUdfChecker(FunctionLocalizer fnLocalizer) {
+      this.fnLocalizer = fnLocalizer;
+    }
+
+    @Override
+    public boolean preRead(Class<?> type) {
+      // 1) Don't call postRead - we will have checked everything here.
+      // 2) Ignore GenericUDFBridge, it's checked separately in LlapUdfBridgeChecker.
+      if (GenericUDFBridge.class == type) return true; // Run post-hook.
+      if (!(GenericUDF.class.isAssignableFrom(type) || UDF.class.isAssignableFrom(type))
+          || fnLocalizer.isUdfAllowed(type)) return false;
+      throw new SecurityException("UDF " + type.getCanonicalName() + " is not allowed");
+    }
+
+    @Override
+    public Object postRead(Object o) {
+      if (o == null) return o;
+      Class<?> type = o.getClass();
+      if (GenericUDFBridge.class == type)  {
+        ((GenericUDFBridge)o).setUdfChecker(fnLocalizer);
+      }
+      // This won't usually be called otherwise.
+      preRead(type);
+      return o;
+    }
+  }
+
   private static class LlapDaemonUncaughtExceptionHandler implements Thread.UncaughtExceptionHandler {
 
     @Override
@@ -447,8 +513,8 @@ public class LlapDaemon extends CompositeService implements ContainerRunner, Lla
   private class QueryFailedHandlerProxy implements QueryFailedHandler {
 
     @Override
-    public void queryFailed(String queryId, String dagName) {
-      containerRunner.queryFailed(queryId, dagName);
+    public void queryFailed(QueryIdentifier queryIdentifier) {
+      containerRunner.queryFailed(queryIdentifier);
     }
   }
 }

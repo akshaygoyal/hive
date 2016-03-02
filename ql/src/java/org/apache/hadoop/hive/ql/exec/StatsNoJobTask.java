@@ -36,6 +36,7 @@ import org.apache.hadoop.hive.common.HiveStatsUtils;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
+import org.apache.hadoop.hive.metastore.api.EnvironmentContext;
 import org.apache.hadoop.hive.metastore.api.InvalidOperationException;
 import org.apache.hadoop.hive.ql.CompilationOpContext;
 import org.apache.hadoop.hive.ql.DriverContext;
@@ -125,7 +126,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
 
   class StatsCollection implements Runnable {
 
-    private Partition partn;
+    private final Partition partn;
 
     public StatsCollection(Partition part) {
       this.partn = part;
@@ -150,7 +151,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
         boolean statsAvailable = false;
         for(FileStatus file: fileList) {
           if (!file.isDir()) {
-            InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtil.newInstance(
+            InputFormat<?, ?> inputFormat = ReflectionUtil.newInstance(
                 partn.getInputFormatClass(), jc);
             InputSplit dummySplit = new FileSplit(file.getPath(), 0, 0,
                 new String[] { partn.getLocation() });
@@ -174,7 +175,6 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
           parameters.put(StatsSetupConst.RAW_DATA_SIZE, String.valueOf(rawDataSize));
           parameters.put(StatsSetupConst.TOTAL_SIZE, String.valueOf(fileSize));
           parameters.put(StatsSetupConst.NUM_FILES, String.valueOf(numFiles));
-          parameters.put(StatsSetupConst.STATS_GENERATED_VIA_STATS_TASK, StatsSetupConst.TRUE);
 
           partUpdates.put(tPart.getSd().getLocation(), new Partition(table, tPart));
 
@@ -195,7 +195,7 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
             "Failed with exception " + e.getMessage() + "\n" + StringUtils.stringifyException(e));
 
         // Before updating the partition params, if any partition params is null
-        // and if statsReliable is true then updatePartition() function  will fail 
+        // and if statsReliable is true then updatePartition() function  will fail
         // the task by returning 1
         if (work.isStatsReliable()) {
           partUpdates.put(tPart.getSd().getLocation(), null);
@@ -246,22 +246,27 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
           boolean statsAvailable = false;
           for(FileStatus file: fileList) {
             if (!file.isDir()) {
-              InputFormat<?, ?> inputFormat = (InputFormat<?, ?>) ReflectionUtil.newInstance(
+              InputFormat<?, ?> inputFormat = ReflectionUtil.newInstance(
                   table.getInputFormatClass(), jc);
               InputSplit dummySplit = new FileSplit(file.getPath(), 0, 0, new String[] { table
                   .getDataLocation().toString() });
-              org.apache.hadoop.mapred.RecordReader<?, ?> recordReader =
-                  inputFormat.getRecordReader(dummySplit, jc, Reporter.NULL);
-              StatsProvidingRecordReader statsRR;
-              if (recordReader instanceof StatsProvidingRecordReader) {
-                statsRR = (StatsProvidingRecordReader) recordReader;
-                numRows += statsRR.getStats().getRowCount();
-                rawDataSize += statsRR.getStats().getRawDataSize();
-                fileSize += file.getLen();
+              if (file.getLen() == 0) {
                 numFiles += 1;
                 statsAvailable = true;
+              } else {
+                org.apache.hadoop.mapred.RecordReader<?, ?> recordReader =
+                    inputFormat.getRecordReader(dummySplit, jc, Reporter.NULL);
+                StatsProvidingRecordReader statsRR;
+                if (recordReader instanceof StatsProvidingRecordReader) {
+                  statsRR = (StatsProvidingRecordReader) recordReader;
+                  numRows += statsRR.getStats().getRowCount();
+                  rawDataSize += statsRR.getStats().getRawDataSize();
+                  fileSize += file.getLen();
+                  numFiles += 1;
+                  statsAvailable = true;
+                }
+                recordReader.close();
               }
-              recordReader.close();
             }
           }
 
@@ -270,9 +275,10 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
             parameters.put(StatsSetupConst.RAW_DATA_SIZE, String.valueOf(rawDataSize));
             parameters.put(StatsSetupConst.TOTAL_SIZE, String.valueOf(fileSize));
             parameters.put(StatsSetupConst.NUM_FILES, String.valueOf(numFiles));
-            parameters.put(StatsSetupConst.STATS_GENERATED_VIA_STATS_TASK, StatsSetupConst.TRUE);
+            EnvironmentContext environmentContext = new EnvironmentContext();
+            environmentContext.putToProperties(StatsSetupConst.STATS_GENERATED, StatsSetupConst.TASK);
 
-            db.alterTable(tableFullName, new Table(tTable));
+            db.alterTable(tableFullName, new Table(tTable), environmentContext);
 
             String msg = "Table " + tableFullName + " stats: [" + toString(parameters) + ']';
             LOG.debug(msg);
@@ -319,7 +325,10 @@ public class StatsNoJobTask extends Task<StatsNoJobWork> implements Serializable
         return -1;
       } else {
         LOG.debug("Bulk updating partitions..");
-        db.alterPartitions(tableFullName, Lists.newArrayList(partUpdates.values()));
+        EnvironmentContext environmentContext = new EnvironmentContext();
+        environmentContext.putToProperties(StatsSetupConst.STATS_GENERATED, StatsSetupConst.TASK);
+        db.alterPartitions(tableFullName, Lists.newArrayList(partUpdates.values()),
+            environmentContext);
         LOG.debug("Bulk updated " + partUpdates.values().size() + " partitions.");
       }
     }

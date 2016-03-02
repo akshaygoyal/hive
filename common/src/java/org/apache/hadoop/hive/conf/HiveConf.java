@@ -18,27 +18,10 @@
 
 package org.apache.hadoop.hive.conf;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintStream;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import javax.security.auth.login.LoginException;
+import com.google.common.base.Joiner;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.common.classification.InterfaceAudience;
 import org.apache.hadoop.hive.common.classification.InterfaceAudience.LimitedPrivate;
 import org.apache.hadoop.hive.conf.Validator.PatternSet;
 import org.apache.hadoop.hive.conf.Validator.RangeValidator;
@@ -56,7 +39,27 @@ import org.apache.hive.common.HiveCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Joiner;
+import javax.security.auth.login.LoginException;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintStream;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Hive Configuration.
@@ -109,7 +112,16 @@ public class HiveConf extends Configuration {
     for (ConfVars confVar : ConfVars.values()) {
       vars.put(confVar.varname, confVar);
     }
+
+    Set<String> llapDaemonConfVarsSetLocal = new LinkedHashSet<>();
+    populateLlapDaemonVarsSet(llapDaemonConfVarsSetLocal);
+    llapDaemonVarsSet = Collections.unmodifiableSet(llapDaemonConfVarsSetLocal);
   }
+
+  @InterfaceAudience.Private
+  public static final String PREFIX_LLAP = "llap.";
+  @InterfaceAudience.Private
+  public static final String PREFIX_HIVE_LLAP = "hive.llap.";
 
   /**
    * Metastore related options that the db is initialized against. When a conf
@@ -210,7 +222,8 @@ public class HiveConf extends Configuration {
   public static final HiveConf.ConfVars[] metaConfVars = {
       HiveConf.ConfVars.METASTORE_TRY_DIRECT_SQL,
       HiveConf.ConfVars.METASTORE_TRY_DIRECT_SQL_DDL,
-      HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT
+      HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT,
+      HiveConf.ConfVars.METASTORE_PARTITION_NAME_WHITELIST_PATTERN
   };
 
   static {
@@ -234,6 +247,70 @@ public class HiveConf extends Configuration {
     HiveConf.ConfVars.METASTOREWAREHOUSE,
     HiveConf.ConfVars.SCRATCHDIR
   };
+
+  /**
+   * Variables used by LLAP daemons.
+   * TODO: Eventually auto-populate this based on prefixes. The conf variables
+   * will need to be renamed for this.
+   */
+  private static final Set<String> llapDaemonVarsSet;
+
+  private static void populateLlapDaemonVarsSet(Set<String> llapDaemonVarsSetLocal) {
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_IO_ENABLED.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_IO_MEMORY_MODE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ALLOCATOR_MIN_ALLOC.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ALLOCATOR_MAX_ALLOC.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ALLOCATOR_ARENA_COUNT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_IO_MEMORY_MAX_SIZE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ALLOCATOR_DIRECT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_USE_LRFU.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_LRFU_LAMBDA.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_CACHE_ALLOW_SYNTHETIC_FILEID.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_IO_USE_FILEID_PATH.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ORC_ENABLE_TIME_COUNTERS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_IO_THREADPOOL_SIZE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_KERBEROS_PRINCIPAL.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_KERBEROS_KEYTAB_FILE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ZKSM_KERBEROS_PRINCIPAL.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ZKSM_KERBEROS_KEYTAB_FILE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_ZKSM_ZK_CONNECTION_STRING.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_SECURITY_ACL.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_MANAGEMENT_ACL.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DELEGATION_TOKEN_LIFETIME.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_MANAGEMENT_RPC_PORT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_WEB_AUTO_AUTH.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_RPC_NUM_HANDLERS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_WORK_DIRS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_YARN_SHUFFLE_PORT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_YARN_CONTAINER_MB.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_SHUFFLE_DIR_WATCHER_ENABLED.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_AM_LIVENESS_HEARTBEAT_INTERVAL_MS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_AM_LIVENESS_CONNECTION_TIMEOUT_MS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_AM_LIVENESS_CONNECTION_SLEEP_BETWEEN_RETRIES_MS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_NUM_EXECUTORS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_RPC_PORT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_MEMORY_PER_INSTANCE_MB.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_VCPUS_PER_INSTANCE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_NUM_FILE_CLEANER_THREADS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_FILE_CLEANUP_DELAY_SECONDS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_SERVICE_HOSTS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_SERVICE_REFRESH_INTERVAL.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_ALLOW_PERMANENT_FNS.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_TASK_SCHEDULER_WAIT_QUEUE_SIZE.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_WAIT_QUEUE_COMPARATOR_CLASS_NAME.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_TASK_SCHEDULER_ENABLE_PREEMPTION.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_WEB_PORT.varname);
+    llapDaemonVarsSetLocal.add(ConfVars.LLAP_DAEMON_WEB_SSL.varname);
+  }
+
+  /**
+   * Get a set containing configuration parameter names used by LLAP Server isntances
+   * @return an unmodifiable set containing llap ConfVars
+   */
+  public static final Set<String> getLlapDaemonConfVars() {
+    return llapDaemonVarsSet;
+  }
+
 
   /**
    * ConfVars.
@@ -386,6 +463,7 @@ public class HiveConf extends Configuration {
     // a symbolic name to reference in the Hive source code. Properties with non-null
     // values will override any values set in the underlying Hadoop configuration.
     HADOOPBIN("hadoop.bin.path", findHadoopBinary(), "", true),
+    YARNBIN("yarn.bin.path", findYarnBinary(), "", true),
     HIVE_FS_HAR_IMPL("fs.har.impl", "org.apache.hadoop.hive.shims.HiveHarFileSystem",
         "The implementation for accessing Hadoop Archives. Note that this won't be applicable to Hadoop versions less than 0.20"),
     MAPREDMAXSPLITSIZE(FileInputFormat.SPLIT_MAXSIZE, 256000000L, "", true),
@@ -471,7 +549,12 @@ public class HiveConf extends Configuration {
         "Set this to true if multiple threads access metastore through JDO concurrently."),
     METASTORECONNECTURLKEY("javax.jdo.option.ConnectionURL",
         "jdbc:derby:;databaseName=metastore_db;create=true",
-        "JDBC connect string for a JDBC metastore"),
+        "JDBC connect string for a JDBC metastore.\n" +
+        "To use SSL to encrypt/authenticate the connection, provide database-specific SSL flag in the connection URL.\n" +
+        "For example, jdbc:postgresql://myhost/db?ssl=true for postgres database."),
+    METASTORE_DBACCESS_SSL_PROPS("hive.metastore.dbaccess.ssl.properties", "",
+           "Comma-separated SSL properties for metastore to access database when JDO connection URL\n" +
+           "enables SSL access. e.g. javax.net.ssl.trustStore=/tmp/truststore,javax.net.ssl.trustStorePassword=pwd."),
     HMSHANDLERATTEMPTS("hive.hmshandler.retry.attempts", 10,
         "The number of times to retry a HMSHandler call if there were a connection error."),
     HMSHANDLERINTERVAL("hive.hmshandler.retry.interval", "2000ms",
@@ -653,6 +736,10 @@ public class HiveConf extends Configuration {
     METASTORE_RAW_STORE_IMPL("hive.metastore.rawstore.impl", "org.apache.hadoop.hive.metastore.ObjectStore",
         "Name of the class that implements org.apache.hadoop.hive.metastore.rawstore interface. \n" +
         "This class is used to store and retrieval of raw metadata objects such as table, database"),
+    METASTORE_TXN_STORE_IMPL("hive.metastore.txn.store.impl",
+        "org.apache.hadoop.hive.metastore.txn.CompactionTxnHandler",
+        "Name of class that implements org.apache.hadoop.hive.metastore.txn.TxnStore.  This " +
+        "class is used to store and retrieve transactions and locks"),
     METASTORE_CONNECTION_DRIVER("javax.jdo.option.ConnectionDriverName", "org.apache.derby.jdbc.EmbeddedDriver",
         "Driver class name for a JDBC metastore"),
     METASTORE_MANAGER_FACTORY_CLASS("javax.jdo.PersistenceManagerFactoryClass",
@@ -785,14 +872,21 @@ public class HiveConf extends Configuration {
         "hive.txn.valid.txns,hive.script.operator.env.blacklist",
         "Comma separated list of keys from the configuration file not to convert to environment " +
         "variables when envoking the script operator"),
-    HIVEMAPREDMODE("hive.mapred.mode", "strict",
-        "The mode in which the Hive operations are being performed. \n" +
-        "In strict mode, some risky queries are not allowed to run. They include:\n" +
-        "  Cartesian Product.\n" +
-        "  No partition being picked up for a query.\n" +
+    HIVE_STRICT_CHECKS_LARGE_QUERY("hive.strict.checks.large.query", false,
+        "Enabling strict large query checks disallows the following:\n" +
+        "  Orderby without limit.\n" +
+        "  No partition being picked up for a query against partitioned table.\n" +
+        "Note that these checks currently do not consider data size, only the query pattern."),
+    HIVE_STRICT_CHECKS_TYPE_SAFETY("hive.strict.checks.type.safety", true,
+        "Enabling strict type safety checks disallows the following:\n" +
         "  Comparing bigints and strings.\n" +
-        "  Comparing bigints and doubles.\n" +
-        "  Orderby without limit."),
+        "  Comparing bigints and doubles."),
+    HIVE_STRICT_CHECKS_CARTESIAN("hive.strict.checks.cartesian.product", true,
+        "Enabling strict large query checks disallows the following:\n" +
+        "  Cartesian product (cross join)."),
+    @Deprecated
+    HIVEMAPREDMODE("hive.mapred.mode", "nonstrict",
+        "Deprecated; use hive.strict.checks.* settings instead."),
     HIVEALIAS("hive.alias", "", ""),
     HIVEMAPSIDEAGGREGATE("hive.map.aggr", true, "Whether to use map-side aggregation in Hive Group By queries"),
     HIVEGROUPBYSKEW("hive.groupby.skewindata", false, "Whether there is skew in data to optimize group by queries"),
@@ -894,7 +988,7 @@ public class HiveConf extends Configuration {
   "Default file format for CREATE TABLE statement applied to managed tables only. External tables will be \n" +
   "created with format specified by hive.default.fileformat. Leaving this null will result in using hive.default.fileformat \n" +
   "for all tables."),
-    HIVEQUERYRESULTFILEFORMAT("hive.query.result.fileformat", "TextFile", new StringSet("TextFile", "SequenceFile", "RCfile"),
+    HIVEQUERYRESULTFILEFORMAT("hive.query.result.fileformat", "SequenceFile", new StringSet("TextFile", "SequenceFile", "RCfile"),
         "Default file format for storing result of the query."),
     HIVECHECKFILEFORMAT("hive.fileformat.check", true, "Whether to check file format or not when loading data files"),
 
@@ -969,6 +1063,9 @@ public class HiveConf extends Configuration {
 
     HIVE_SCHEMA_EVOLUTION("hive.exec.schema.evolution", false,
         "Use schema evolution to convert self-describing file format's data to the schema desired by the reader."),
+
+    HIVE_TRANSACTIONAL_TABLE_SCAN("hive.transactional.table.scan", false,
+        "internal usage only -- do transaction (ACID) table scan.", true),
 
     HIVESAMPLERANDOMNUM("hive.sample.seednumber", 0,
         "A number used to percentage sampling. By changing this number, user will change the subsets of data sampled."),
@@ -1203,6 +1300,9 @@ public class HiveConf extends Configuration {
     HIVETEZLOGLEVEL("hive.tez.log.level", "INFO",
         "The log level to use for tasks executing as part of the DAG.\n" +
         "Used only if hive.tez.java.opts is used to configure Java options."),
+    HIVEQUERYNAME ("hive.query.name", null,
+        "This named is used by Tez to set the dag name. This name in turn will appear on \n" +
+        "the Tez UI representing the work that was done."),
 
     HIVEOPTIMIZEBUCKETINGSORTING("hive.optimize.bucketingsorting", true,
         "Don't create a reducer for enforcing \n" +
@@ -1254,10 +1354,15 @@ public class HiveConf extends Configuration {
         "Whether to update stale indexes automatically"),
     HIVEOPTPPD("hive.optimize.ppd", true,
         "Whether to enable predicate pushdown"),
+    HIVEOPTPPD_WINDOWING("hive.optimize.ppd.windowing", true,
+        "Whether to enable predicate pushdown through windowing"),
     HIVEPPDRECOGNIZETRANSITIVITY("hive.ppd.recognizetransivity", true,
         "Whether to transitively replicate predicate filters over equijoin conditions."),
     HIVEPPDREMOVEDUPLICATEFILTERS("hive.ppd.remove.duplicatefilters", true,
-        "Whether to push predicates down into storage handlers.  Ignored when hive.optimize.ppd is false."),
+        "During query optimization, filters may be pushed down in the operator tree. \n" +
+        "If this config is true only pushed down filters remain in the operator tree, \n" +
+        "and the original filter is removed. If this config is false, the original filter \n" +
+        "is also left in the operator tree at the original place."),
     HIVEPOINTLOOKUPOPTIMIZER("hive.optimize.point.lookup", true,
          "Whether to transform OR clauses in Filter operators into IN clauses"),
     HIVEPOINTLOOKUPOPTIMIZERMIN("hive.optimize.point.lookup.min", 31,
@@ -1340,6 +1445,11 @@ public class HiveConf extends Configuration {
         "\n" +
         "If the skew information is correctly stored in the metadata, hive.optimize.skewjoin.compiletime\n" +
         "would change the query plan to take care of it, and hive.optimize.skewjoin will be a no-op."),
+
+    // CTE
+    HIVE_CTE_MATERIALIZE_THRESHOLD("hive.optimize.cte.materialize.threshold", -1,
+        "If the number of references to a CTE clause exceeds this threshold, Hive will materialize it\n" +
+        "before executing the main query block. -1 will disable this feature."),
 
     // Indexes
     HIVEOPTINDEXFILTER_COMPACT_MINSIZE("hive.optimize.index.filter.compact.minsize", (long) 5 * 1024 * 1024 * 1024,
@@ -1477,7 +1587,8 @@ public class HiveConf extends Configuration {
         "org.apache.hadoop.hive.ql.lockmgr.zookeeper.ZooKeeperHiveLockManager, \n" +
         "2. When HiveServer2 supports service discovery via Zookeeper.\n" +
         "3. For delegation token storage if zookeeper store is used, if\n" +
-        "hive.cluster.delegation.token.store.zookeeper.connectString is not set"),
+        "hive.cluster.delegation.token.store.zookeeper.connectString is not set\n" +
+        "4. LLAP daemon registry service"),
 
     HIVE_ZOOKEEPER_CLIENT_PORT("hive.zookeeper.client.port", "2181",
         "The port of ZooKeeper servers to talk to.\n" +
@@ -1571,32 +1682,32 @@ public class HiveConf extends Configuration {
     HIVE_COMPACTOR_ABORTEDTXN_THRESHOLD("hive.compactor.abortedtxn.threshold", 1000,
         "Number of aborted transactions involving a given table or partition that will trigger\n" +
         "a major compaction."),
-    
+
     COMPACTOR_INITIATOR_FAILED_THRESHOLD("hive.compactor.initiator.failed.compacts.threshold", 2,
       new RangeValidator(1, 20), "Number of consecutive compaction failures (per table/partition) " +
       "after which automatic compactions will not be scheduled any more.  Note that this must be less " +
       "than hive.compactor.history.retention.failed."),
-    
+
     HIVE_COMPACTOR_CLEANER_RUN_INTERVAL("hive.compactor.cleaner.run.interval", "5000ms",
         new TimeValidator(TimeUnit.MILLISECONDS), "Time between runs of the cleaner thread"),
     COMPACTOR_JOB_QUEUE("hive.compactor.job.queue", "", "Used to specify name of Hadoop queue to which\n" +
       "Compaction jobs will be submitted.  Set to empty string to let Hadoop choose the queue."),
-    
+
     COMPACTOR_HISTORY_RETENTION_SUCCEEDED("hive.compactor.history.retention.succeeded", 3,
       new RangeValidator(0, 100), "Determines how many successful compaction records will be " +
       "retained in compaction history for a given table/partition."),
-    
+
     COMPACTOR_HISTORY_RETENTION_FAILED("hive.compactor.history.retention.failed", 3,
       new RangeValidator(0, 100), "Determines how many failed compaction records will be " +
       "retained in compaction history for a given table/partition."),
-    
+
     COMPACTOR_HISTORY_RETENTION_ATTEMPTED("hive.compactor.history.retention.attempted", 2,
       new RangeValidator(0, 100), "Determines how many attempted compaction records will be " +
       "retained in compaction history for a given table/partition."),
-    
+
     COMPACTOR_HISTORY_REAPER_INTERVAL("hive.compactor.history.reaper.interval", "2m",
       new TimeValidator(TimeUnit.MILLISECONDS), "Determines how often compaction history reaper runs"),
-    
+
     HIVE_TIMEDOUT_TXN_REAPER_START("hive.timedout.txn.reaper.start", "100s",
       new TimeValidator(TimeUnit.MILLISECONDS), "Time delay of 1st reaper run after metastore start"),
     HIVE_TIMEDOUT_TXN_REAPER_INTERVAL("hive.timedout.txn.reaper.interval", "180s",
@@ -1899,6 +2010,8 @@ public class HiveConf extends Configuration {
         "HTTP/_HOST@EXAMPLE.COM", "The HiveServer2 WebUI SPNEGO service principal.\n" +
         "The special string _HOST will be replaced automatically with \n" +
         "the value of hive.server2.webui.host or the correct host name."),
+    HIVE_SERVER2_WEBUI_MAX_HISTORIC_QUERIES("hive.server2.webui.max.historic.queries", 25,
+        "The maximum number of past queries to show in HiverSever2 WebUI."),
 
     // Tez session settings
     HIVE_SERVER2_TEZ_DEFAULT_QUEUES("hive.server2.tez.default.queues", "",
@@ -1921,6 +2034,10 @@ public class HiveConf extends Configuration {
     HIVE_SERVER2_TEZ_SESSION_LIFETIME_JITTER("hive.server2.tez.session.lifetime.jitter", "3h",
         new TimeValidator(TimeUnit.HOURS),
         "The jitter for Tez session lifetime; prevents all the sessions from restarting at once."),
+    HIVE_SERVER2_TEZ_SESSION_MAX_INIT_THREADS("hive.server2.tez.sessions.init.threads", 16,
+        "If hive.server2.tez.initialize.default.sessions is enabled, the maximum number of\n" +
+        "threads to use to initialize the default sessions."),
+
 
     // Operation log configuration
     HIVE_SERVER2_LOGGING_OPERATION_ENABLED("hive.server2.logging.operation.enabled", true,
@@ -2281,7 +2398,6 @@ public class HiveConf extends Configuration {
         "Whether to generate the splits locally or in the AM (tez only)"),
     HIVE_TEZ_GENERATE_CONSISTENT_SPLITS("hive.tez.input.generate.consistent.splits", true,
         "Whether to generate consistent split locations when generating splits in the AM"),
-
     HIVE_PREWARM_ENABLED("hive.prewarm.enabled", false, "Enables container prewarm for Tez/Spark (Hadoop 2 only)"),
     HIVE_PREWARM_NUM_CONTAINERS("hive.prewarm.numcontainers", 10, "Controls the number of containers to prewarm for Tez/Spark (Hadoop 2 only)"),
 
@@ -2339,6 +2455,10 @@ public class HiveConf extends Configuration {
          "When pruning is enabled, filters on bucket columns will be processed by \n" +
          "filtering the splits against a bitset of included buckets. This needs predicates \n"+
          "produced by hive.optimize.ppd and hive.optimize.index.filters."),
+    TEZ_OPTIMIZE_BUCKET_PRUNING_COMPAT(
+        "hive.tez.bucket.pruning.compat", true,
+        "When pruning is enabled, handle possibly broken inserts due to negative hashcodes.\n" +
+        "This occasionally doubles the data scan cost, but is default enabled for safety"),
     TEZ_DYNAMIC_PARTITION_PRUNING(
         "hive.tez.dynamic.partition.pruning", true,
         "When dynamic pruning is enabled, joins on partition keys will be processed by sending\n" +
@@ -2412,6 +2532,10 @@ public class HiveConf extends Configuration {
         "Check input size, before considering vertex (-1 disables check)"),
     LLAP_AUTO_MAX_OUTPUT("hive.llap.auto.max.output.size", 1*1024*1024*1024L,
         "Check output size, before considering vertex (-1 disables check)"),
+    LLAP_SKIP_COMPILE_UDF_CHECK("hive.llap.skip.compile.udf.check", false,
+        "Whether to skip the compile-time check for non-built-in UDFs when deciding whether to\n" +
+        "execute tasks in LLAP. Skipping the check allows executing UDFs from pre-localized\n" +
+        "jars in LLAP; if the jars are not pre-localized, the UDFs will simply fail to load."),
     LLAP_EXECUTION_MODE("hive.llap.execution.mode", "none",
         new StringSet("auto", "none", "all", "map"),
         "Chooses whether query fragments will run in container or in llap"),
@@ -2456,7 +2580,7 @@ public class HiveConf extends Configuration {
     LLAP_DAEMON_YARN_SHUFFLE_PORT("hive.llap.daemon.yarn.shuffle.port", 15551,
       "YARN shuffle port for LLAP-daemon-hosted shuffle.", "llap.daemon.yarn.shuffle.port"),
     LLAP_DAEMON_YARN_CONTAINER_MB("hive.llap.daemon.yarn.container.mb", -1,
-      "TODO doc. Unused?", "llap.daemon.yarn.container.mb"),
+      "llap server yarn container size in MB. Used in LlapServiceDriver and package.py", "llap.daemon.yarn.container.mb"),
     LLAP_DAEMON_SHUFFLE_DIR_WATCHER_ENABLED("hive.llap.daemon.shuffle.dir.watcher.enabled", false,
       "TODO doc", "llap.daemon.shuffle.dir-watcher.enabled"),
     LLAP_DAEMON_AM_LIVENESS_HEARTBEAT_INTERVAL_MS(
@@ -2494,7 +2618,7 @@ public class HiveConf extends Configuration {
        new TimeValidator(TimeUnit.SECONDS),
       "How long to delay before cleaning up query files in LLAP (in seconds, for debugging).",
       "llap.file.cleanup.delay-seconds"),
-    LLAP_DAEMON_SERVICE_HOSTS("hive.llap.daemon.service.hosts", "",
+    LLAP_DAEMON_SERVICE_HOSTS("hive.llap.daemon.service.hosts", null,
       "Explicitly specified hosts to use for LLAP scheduling. Useful for testing. By default,\n" +
       "YARN registry is used.", "llap.daemon.service.hosts"),
     LLAP_DAEMON_SERVICE_REFRESH_INTERVAL("hive.llap.daemon.service.refresh.interval.sec", "60s",
@@ -2504,7 +2628,7 @@ public class HiveConf extends Configuration {
     LLAP_DAEMON_COMMUNICATOR_NUM_THREADS("hive.llap.daemon.communicator.num.threads", 10,
       "Number of threads to use in LLAP task communicator in Tez AM.",
       "llap.daemon.communicator.num.threads"),
-    LLAP_DAEMON_ALLOW_PERMANENT_FNS("hive.llap.daemon.allow.permanent.fns", true,
+    LLAP_DAEMON_ALLOW_PERMANENT_FNS("hive.llap.daemon.allow.permanent.fns", false,
         "Whether LLAP daemon should localize the resources for permanent UDFs."),
     LLAP_TASK_SCHEDULER_NODE_REENABLE_MIN_TIMEOUT_MS(
       "hive.llap.task.scheduler.node.reenable.min.timeout.ms", "200ms",
@@ -2563,6 +2687,10 @@ public class HiveConf extends Configuration {
       "llap.daemon.service.port"),
     LLAP_DAEMON_WEB_SSL("hive.llap.daemon.web.ssl", false,
       "Whether LLAP daemon web UI should use SSL.", "llap.daemon.service.ssl"),
+    LLAP_CLIENT_CONSISTENT_SPLITS("hive.llap.client.consistent.splits",
+        false,
+        "Whether to setup split locations to match nodes on which llap daemons are running," +
+            " instead of using the locations provided by the split itself"),
 
     SPARK_CLIENT_FUTURE_TIMEOUT("hive.spark.client.future.timeout",
       "60s", new TimeValidator(TimeUnit.SECONDS),
@@ -2587,6 +2715,11 @@ public class HiveConf extends Configuration {
       "Channel logging level for remote Spark driver.  One of {DEBUG, ERROR, INFO, TRACE, WARN}."),
     SPARK_RPC_SASL_MECHANISM("hive.spark.client.rpc.sasl.mechanisms", "DIGEST-MD5",
       "Name of the SASL mechanism to use for authentication."),
+    SPARK_RPC_SERVER_ADDRESS("hive.spark.client.rpc.server.address", "",
+      "The server address of HiverServer2 host to be used for communication between Hive client and remote Spark driver. " + 
+      "Default is empty, which means the address will be determined in the same way as for hive.server2.thrift.bind.host." +
+      "This is only necessary if the host has mutiple network addresses and if a different network address other than " +
+      "hive.server2.thrift.bind.host is to be used."),
     SPARK_DYNAMIC_PARTITION_PRUNING(
         "hive.spark.dynamic.partition.pruning", false,
         "When dynamic pruning is enabled, joins on partition keys will be processed by writing\n" +
@@ -2777,16 +2910,27 @@ public class HiveConf extends Configuration {
     }
 
     private static String findHadoopBinary() {
+      String val = findHadoopHome();
+      // if can't find hadoop home we can at least try /usr/bin/hadoop
+      val = (val == null ? File.separator + "usr" : val)
+          + File.separator + "bin" + File.separator + "hadoop";
+      // Launch hadoop command file on windows.
+      return val + (Shell.WINDOWS ? ".cmd" : "");
+    }
+
+    private static String findYarnBinary() {
+      String val = findHadoopHome();
+      val = (val == null ? "yarn" : val + File.separator + "bin" + File.separator + "yarn");
+      return val + (Shell.WINDOWS ? ".cmd" : "");
+    }
+
+    private static String findHadoopHome() {
       String val = System.getenv("HADOOP_HOME");
       // In Hadoop 1.X and Hadoop 2.X HADOOP_HOME is gone and replaced with HADOOP_PREFIX
       if (val == null) {
         val = System.getenv("HADOOP_PREFIX");
       }
-      // and if all else fails we can at least try /usr/bin/hadoop
-      val = (val == null ? File.separator + "usr" : val)
-        + File.separator + "bin" + File.separator + "hadoop";
-      // Launch hadoop command file on windows.
-      return val + (Shell.WINDOWS ? ".cmd" : "");
+      return val;
     }
 
     public String getDefaultValue() {
@@ -2906,7 +3050,8 @@ public class HiveConf extends Configuration {
   private boolean isSparkRelatedConfig(String name) {
     boolean result = false;
     if (name.startsWith("spark")) { // Spark property.
-      result = true;
+      // for now we don't support changing spark app name on the fly
+      result = !name.equals("spark.app.name");
     } else if (name.startsWith("yarn")) { // YARN property in Spark on YARN mode.
       String sparkMaster = get("spark.master");
       if (sparkMaster != null &&
@@ -3147,6 +3292,17 @@ public class HiveConf extends Configuration {
       return conf.getTrimmed(var.varname, conf.getTrimmed(var.altName, var.defaultStrVal));
     }
     return conf.getTrimmed(var.varname, var.defaultStrVal);
+  }
+
+  public static String[] getTrimmedStringsVar(Configuration conf, ConfVars var) {
+    assert (var.valClass == String.class) : var.varname;
+    String[] result = conf.getTrimmedStrings(var.varname, (String[])null);
+    if (result != null) return result;
+    if (var.altName != null) {
+      result = conf.getTrimmedStrings(var.altName, (String[])null);
+      if (result != null) return result;
+    }
+    return org.apache.hadoop.util.StringUtils.getTrimmedStrings(var.defaultStrVal);
   }
 
   public static String getVar(Configuration conf, ConfVars var, String defaultVal) {
@@ -3678,6 +3834,21 @@ public class HiveConf extends Configuration {
     }
   }
 
+  /**
+   * @return true if HS2 webui is enabled
+   */
+  public boolean isWebUiEnabled() {
+    return this.getIntVar(ConfVars.HIVE_SERVER2_WEBUI_PORT) != 0;
+  }
+
+  /**
+   * @return true if HS2 webui query-info cache is enabled
+   */
+  public boolean isWebUiQueryInfoCacheEnabled() {
+    return isWebUiEnabled() && this.getIntVar(ConfVars.HIVE_SERVER2_WEBUI_MAX_HISTORIC_QUERIES) > 0;
+  }
+
+
   public static boolean isLoadMetastoreConfig() {
     return loadMetastoreConfig;
   }
@@ -3692,6 +3863,47 @@ public class HiveConf extends Configuration {
 
   public static void setLoadHiveServer2Config(boolean loadHiveServer2Config) {
     HiveConf.loadHiveServer2Config = loadHiveServer2Config;
+  }
+
+  public static class StrictChecks {
+
+    private static final String NO_LIMIT_MSG = makeMessage(
+        "Order by-s without limit", ConfVars.HIVE_STRICT_CHECKS_LARGE_QUERY);
+    private static final String NO_PARTITIONLESS_MSG = makeMessage(
+        "Queries against partitioned tables without a partition filter",
+        ConfVars.HIVE_STRICT_CHECKS_LARGE_QUERY);
+    private static final String NO_COMPARES_MSG = makeMessage(
+        "Unsafe compares between different types", ConfVars.HIVE_STRICT_CHECKS_TYPE_SAFETY);
+    private static final String NO_CARTESIAN_MSG = makeMessage(
+        "Cartesian products", ConfVars.HIVE_STRICT_CHECKS_CARTESIAN);
+
+    private static String makeMessage(String what, ConfVars setting) {
+      return what + " are disabled for safety reasons. If you know what you are doing, please make"
+          + " sure that " + setting.varname + " is set to false and that "
+          + ConfVars.HIVEMAPREDMODE.varname + " is not set to 'strict' to enable them.";
+    }
+
+    public static String checkNoLimit(Configuration conf) {
+      return isAllowed(conf, ConfVars.HIVE_STRICT_CHECKS_LARGE_QUERY) ? null : NO_LIMIT_MSG;
+    }
+
+    public static String checkNoPartitionFilter(Configuration conf) {
+      return isAllowed(conf, ConfVars.HIVE_STRICT_CHECKS_LARGE_QUERY)
+          ? null : NO_PARTITIONLESS_MSG;
+    }
+
+    public static String checkTypeSafety(Configuration conf) {
+      return isAllowed(conf, ConfVars.HIVE_STRICT_CHECKS_TYPE_SAFETY) ? null : NO_COMPARES_MSG;
+    }
+
+    public static String checkCartesian(Configuration conf) {
+      return isAllowed(conf, ConfVars.HIVE_STRICT_CHECKS_CARTESIAN) ? null : NO_CARTESIAN_MSG;
+    }
+
+    private static boolean isAllowed(Configuration conf, ConfVars setting) {
+      String mode = HiveConf.getVar(conf, ConfVars.HIVEMAPREDMODE, null);
+      return (mode != null) ? !"strict".equals(mode) : !HiveConf.getBoolVar(conf, setting);
+    }
   }
 
   public static String getNonMrEngines() {

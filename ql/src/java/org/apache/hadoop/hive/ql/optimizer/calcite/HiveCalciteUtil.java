@@ -26,7 +26,6 @@ import java.util.Map.Entry;
 import java.util.Set;
 
 import org.apache.calcite.plan.RelOptCluster;
-import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelOptUtil.InputFinder;
 import org.apache.calcite.plan.RelOptUtil.InputReferencedVisitor;
@@ -48,6 +47,7 @@ import org.apache.calcite.rex.RexLocalRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexRangeRef;
+import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitor;
 import org.apache.calcite.rex.RexVisitorImpl;
@@ -75,6 +75,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMap.Builder;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 /**
@@ -622,22 +623,61 @@ public class HiveCalciteUtil {
     return call.getKind().belongsTo(SqlKind.COMPARISON);
   }
 
-  private static final Function<RexNode, String> REX_STR_FN = new Function<RexNode, String>() {
+  public static final Function<RexNode, String> REX_STR_FN = new Function<RexNode, String>() {
                                                               public String apply(RexNode r) {
                                                                 return r.toString();
                                                               }
                                                             };
 
-  public static ImmutableList<RexNode> getPredsNotPushedAlready(RelNode inp, List<RexNode> predsToPushDown) {
-    final RelOptPredicateList predicates = RelMetadataQuery.getPulledUpPredicates(inp);
-    final ImmutableSet<String> alreadyPushedPreds = ImmutableSet.copyOf(Lists.transform(
-        predicates.pulledUpPredicates, REX_STR_FN));
-    final ImmutableList.Builder<RexNode> newConjuncts = ImmutableList.builder();
+  public static ImmutableList<RexNode> getPredsNotPushedAlready(RelNode inp, List<RexNode> predsToPushDown) {   
+    return getPredsNotPushedAlready(Sets.<String>newHashSet(), inp, predsToPushDown);
+  }
+
+  /**
+   * Given a list of predicates to push down, this methods returns the set of predicates
+   * that still need to be pushed. Predicates need to be pushed because 1) their String
+   * representation is not included in input set of predicates to exclude, or 2) they are
+   * already in the subtree rooted at the input node.
+   * This method updates the set of predicates to exclude with the String representation
+   * of the predicates in the output and in the subtree.
+   *
+   * @param predicatesToExclude String representation of predicates that should be excluded
+   * @param inp root of the subtree
+   * @param predsToPushDown candidate predicates to push down through the subtree
+   * @return list of predicates to push down
+   */
+  public static ImmutableList<RexNode> getPredsNotPushedAlready(Set<String> predicatesToExclude,
+          RelNode inp, List<RexNode> predsToPushDown) {
+    // Bail out if there is nothing to push
+    if (predsToPushDown.isEmpty()) {
+      return ImmutableList.of();
+    }
+    // Build map to not convert multiple times, further remove already included predicates
+    Map<String,RexNode> stringToRexNode = Maps.newLinkedHashMap();
     for (RexNode r : predsToPushDown) {
-      if (!alreadyPushedPreds.contains(r.toString())) {
-        newConjuncts.add(r);
+      String rexNodeString = r.toString();
+      if (predicatesToExclude.add(rexNodeString)) {
+        stringToRexNode.put(rexNodeString, r);
       }
     }
+    if (stringToRexNode.isEmpty()) {
+      return ImmutableList.of();
+    }
+    // Finally exclude preds that are already in the subtree as given by the metadata provider
+    // Note: this is the last step, trying to avoid the expensive call to the metadata provider
+    //       if possible
+    Set<String> predicatesInSubtree = Sets.newHashSet();
+    for (RexNode pred : RelMetadataQuery.instance().getPulledUpPredicates(inp).pulledUpPredicates) {
+      predicatesInSubtree.add(pred.toString());
+      predicatesInSubtree.addAll(Lists.transform(RelOptUtil.conjunctions(pred), REX_STR_FN));
+    }
+    final ImmutableList.Builder<RexNode> newConjuncts = ImmutableList.builder();
+    for (Entry<String,RexNode> e : stringToRexNode.entrySet()) {
+      if (predicatesInSubtree.add(e.getKey())) {
+        newConjuncts.add(e.getValue());
+      }
+    }
+    predicatesToExclude.addAll(predicatesInSubtree);
     return newConjuncts.build();
   }
 
@@ -680,46 +720,57 @@ public class HiveCalciteUtil {
     return deterministic;
   }
 
+  private static class DeterMinisticFuncVisitorImpl extends RexVisitorImpl<Void> {
+    protected DeterMinisticFuncVisitorImpl() {
+      super(true);
+    }
+
+    @Override
+    public Void visitCall(org.apache.calcite.rex.RexCall call) {
+      if (!call.getOperator().isDeterministic()) {
+        throw new Util.FoundOne(call);
+      }
+      return super.visitCall(call);
+    }
+
+    @Override
+    public Void visitCorrelVariable(RexCorrelVariable correlVariable) {
+      throw new Util.FoundOne(correlVariable);
+    }
+
+    @Override
+    public Void visitLocalRef(RexLocalRef localRef) {
+      throw new Util.FoundOne(localRef);
+    }
+
+    @Override
+    public Void visitOver(RexOver over) {
+      throw new Util.FoundOne(over);
+    }
+
+    @Override
+    public Void visitDynamicParam(RexDynamicParam dynamicParam) {
+      throw new Util.FoundOne(dynamicParam);
+    }
+
+    @Override
+    public Void visitRangeRef(RexRangeRef rangeRef) {
+      throw new Util.FoundOne(rangeRef);
+    }
+
+    @Override
+    public Void visitFieldAccess(RexFieldAccess fieldAccess) {
+      throw new Util.FoundOne(fieldAccess);
+    }
+  }
+
   public static boolean isDeterministicFuncOnLiterals(RexNode expr) {
     boolean deterministicFuncOnLiterals = true;
 
-    RexVisitor<Void> visitor = new RexVisitorImpl<Void>(true) {
-      @Override
-      public Void visitCall(org.apache.calcite.rex.RexCall call) {
-        if (!call.getOperator().isDeterministic()) {
-          throw new Util.FoundOne(call);
-        }
-        return super.visitCall(call);
-      }
-
+    RexVisitor<Void> visitor = new DeterMinisticFuncVisitorImpl() {
       @Override
       public Void visitInputRef(RexInputRef inputRef) {
         throw new Util.FoundOne(inputRef);
-      }
-
-      @Override
-      public Void visitLocalRef(RexLocalRef localRef) {
-        throw new Util.FoundOne(localRef);
-      }
-
-      @Override
-      public Void visitOver(RexOver over) {
-        throw new Util.FoundOne(over);
-      }
-
-      @Override
-      public Void visitDynamicParam(RexDynamicParam dynamicParam) {
-        throw new Util.FoundOne(dynamicParam);
-      }
-
-      @Override
-      public Void visitRangeRef(RexRangeRef rangeRef) {
-        throw new Util.FoundOne(rangeRef);
-      }
-
-      @Override
-      public Void visitFieldAccess(RexFieldAccess fieldAccess) {
-        throw new Util.FoundOne(fieldAccess);
       }
     };
 
@@ -730,6 +781,47 @@ public class HiveCalciteUtil {
     }
 
     return deterministicFuncOnLiterals;
+  }
+
+  public List<RexNode> getDeterministicFuncWithSingleInputRef(List<RexNode> exprs,
+      final Set<Integer> validInputRefs) {
+    List<RexNode> determExprsWithSingleRef = new ArrayList<RexNode>();
+    for (RexNode e : exprs) {
+      if (isDeterministicFuncWithSingleInputRef(e, validInputRefs)) {
+        determExprsWithSingleRef.add(e);
+      }
+    }
+    return determExprsWithSingleRef;
+  }
+
+  public static boolean isDeterministicFuncWithSingleInputRef(RexNode expr,
+      final Set<Integer> validInputRefs) {
+    boolean deterministicFuncWithSingleInputRef = true;
+
+    RexVisitor<Void> visitor = new DeterMinisticFuncVisitorImpl() {
+      Set<Integer> inputRefs = new HashSet<Integer>();
+
+      @Override
+      public Void visitInputRef(RexInputRef inputRef) {
+        if (validInputRefs.contains(inputRef.getIndex())) {
+          inputRefs.add(inputRef.getIndex());
+          if (inputRefs.size() > 1) {
+            throw new Util.FoundOne(inputRef);
+          }
+        } else {
+          throw new Util.FoundOne(inputRef);
+        }
+        return null;
+      }
+    };
+
+    try {
+      expr.accept(visitor);
+    } catch (Util.FoundOne e) {
+      deterministicFuncWithSingleInputRef = false;
+    }
+
+    return deterministicFuncWithSingleInputRef;
   }
 
   public static <T> ImmutableMap<Integer, T> getColInfoMap(List<T> hiveCols,
@@ -895,6 +987,12 @@ public class HiveCalciteUtil {
     public Boolean visitFieldAccess(RexFieldAccess fieldAccess) {
       // "<expr>.FIELD" is constant iff "<expr>" is constant.
       return fieldAccess.getReferenceExpr().accept(this);
+    }
+
+    @Override
+    public Boolean visitSubQuery(RexSubQuery subQuery) {
+      // it seems that it is not used by anything.
+      return false;
     }
   }
 

@@ -325,34 +325,39 @@ struct Index {
 struct BooleanColumnStatsData {
 1: required i64 numTrues,
 2: required i64 numFalses,
-3: required i64 numNulls
+3: required i64 numNulls,
+4: optional string bitVectors
 }
 
 struct DoubleColumnStatsData {
 1: optional double lowValue,
 2: optional double highValue,
 3: required i64 numNulls,
-4: required i64 numDVs
+4: required i64 numDVs,
+5: optional string bitVectors
 }
 
 struct LongColumnStatsData {
 1: optional i64 lowValue,
 2: optional i64 highValue,
 3: required i64 numNulls,
-4: required i64 numDVs
+4: required i64 numDVs,
+5: optional string bitVectors
 }
 
 struct StringColumnStatsData {
 1: required i64 maxColLen,
 2: required double avgColLen,
 3: required i64 numNulls,
-4: required i64 numDVs
+4: required i64 numDVs,
+5: optional string bitVectors
 }
 
 struct BinaryColumnStatsData {
 1: required i64 maxColLen,
 2: required double avgColLen,
-3: required i64 numNulls
+3: required i64 numNulls,
+4: optional string bitVectors
 }
 
 
@@ -365,7 +370,8 @@ struct DecimalColumnStatsData {
 1: optional Decimal lowValue,
 2: optional Decimal highValue,
 3: required i64 numNulls,
-4: required i64 numDVs
+4: required i64 numDVs,
+5: optional string bitVectors
 }
 
 struct Date {
@@ -376,7 +382,8 @@ struct DateColumnStatsData {
 1: optional Date lowValue,
 2: optional Date highValue,
 3: required i64 numNulls,
-4: required i64 numDVs
+4: required i64 numDVs,
+5: optional string bitVectors
 }
 
 union ColumnStatisticsData {
@@ -733,7 +740,17 @@ struct FireEventRequest {
 struct FireEventResponse {
     // NOP for now, this is just a place holder for future responses
 }
-    
+
+
+struct GetChangeVersionRequest {
+  1: required string topic
+}
+
+struct GetChangeVersionResult {
+  1: required i64 version
+}
+
+
 struct MetadataPpdResult {
   1: optional binary metadata,
   2: optional binary includeBitset
@@ -1105,6 +1122,7 @@ service ThriftHiveMetastore extends fb303.FacebookService
   // prehooks are fired together followed by all post hooks
   void alter_partitions(1:string db_name, 2:string tbl_name, 3:list<Partition> new_parts)
                        throws (1:InvalidOperationException o1, 2:MetaException o2)
+  void alter_partitions_with_environment_context(1:string db_name, 2:string tbl_name, 3:list<Partition> new_parts, 4:EnvironmentContext environment_context) throws (1:InvalidOperationException o1, 2:MetaException o2)
 
   void alter_partition_with_environment_context(1:string db_name,
       2:string tbl_name, 3:Partition new_part,
@@ -1307,6 +1325,7 @@ service ThriftHiveMetastore extends fb303.FacebookService
   ClearFileMetadataResult clear_file_metadata(1:ClearFileMetadataRequest req)
   CacheFileMetadataResult cache_file_metadata(1:CacheFileMetadataRequest req)
 
+  GetChangeVersionResult get_change_version(1:GetChangeVersionRequest req)
 }
 
 // * Note about the DDL_TIME: When creating or altering a table or a partition,

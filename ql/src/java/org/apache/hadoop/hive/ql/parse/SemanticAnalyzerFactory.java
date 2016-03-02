@@ -75,6 +75,7 @@ public final class SemanticAnalyzerFactory {
     commandType.put(HiveParser.TOK_SHOWCONF, HiveOperation.SHOWCONF);
     commandType.put(HiveParser.TOK_CREATEFUNCTION, HiveOperation.CREATEFUNCTION);
     commandType.put(HiveParser.TOK_DROPFUNCTION, HiveOperation.DROPFUNCTION);
+    commandType.put(HiveParser.TOK_RELOADFUNCTION, HiveOperation.RELOADFUNCTION);
     commandType.put(HiveParser.TOK_CREATEMACRO, HiveOperation.CREATEMACRO);
     commandType.put(HiveParser.TOK_DROPMACRO, HiveOperation.DROPMACRO);
     commandType.put(HiveParser.TOK_CREATEVIEW, HiveOperation.CREATEVIEW);
@@ -152,6 +153,9 @@ public final class SemanticAnalyzerFactory {
     tablePartitionCommandType.put(HiveParser.TOK_ALTERTABLE_UPDATECOLSTATS,
         new HiveOperation[] {HiveOperation.ALTERTABLE_UPDATETABLESTATS,
             HiveOperation.ALTERTABLE_UPDATEPARTSTATS});
+    tablePartitionCommandType.put(HiveParser.TOK_ALTERTABLE_UPDATESTATS,
+        new HiveOperation[] {HiveOperation.ALTERTABLE_UPDATETABLESTATS,
+        HiveOperation.ALTERTABLE_UPDATEPARTSTATS});
   }
 
   public static BaseSemanticAnalyzer get(HiveConf conf, ASTNode tree)

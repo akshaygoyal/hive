@@ -18,6 +18,8 @@
 
 package org.apache.hadoop.hive.ql.io;
 
+import org.apache.hadoop.mapred.InputFormat;
+import org.apache.hadoop.mapred.OutputFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -26,7 +28,10 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.hive.common.ValidTxnList;
+import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
+import org.apache.hadoop.hive.ql.metadata.Table;
 import org.apache.hadoop.hive.shims.HadoopShims;
 import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.hive.shims.HadoopShims.HdfsFileStatusWithId;
@@ -101,6 +106,7 @@ public class AcidUtils {
       Pattern.compile("[0-9]+_[0-9]+");
 
   public static final PathFilter hiddenFileFilter = new PathFilter(){
+    @Override
     public boolean accept(Path p){
       String name = p.getName();
       return !name.startsWith("_") && !name.startsWith(".");
@@ -441,7 +447,7 @@ public class AcidUtils {
       Configuration conf,
       ValidTxnList txnList
       ) throws IOException {
-    return getAcidState(directory, conf, txnList, false);
+    return getAcidState(directory, conf, txnList, false, false);
   }
 
   /** State class for getChildState; cannot modify 2 things in a method. */
@@ -464,7 +470,8 @@ public class AcidUtils {
   public static Directory getAcidState(Path directory,
                                        Configuration conf,
                                        ValidTxnList txnList,
-                                       boolean useFileIds
+                                       boolean useFileIds,
+                                       boolean ignoreEmptyFiles
                                        ) throws IOException {
     FileSystem fs = directory.getFileSystem(conf);
     final List<ParsedDelta> deltas = new ArrayList<ParsedDelta>();
@@ -485,13 +492,13 @@ public class AcidUtils {
     if (childrenWithId != null) {
       for (HdfsFileStatusWithId child : childrenWithId) {
         getChildState(child.getFileStatus(), child, txnList, working,
-            originalDirectories, original, obsolete, bestBase);
+            originalDirectories, original, obsolete, bestBase, ignoreEmptyFiles);
       }
     } else {
       List<FileStatus> children = SHIMS.listLocatedStatus(fs, directory, hiddenFileFilter);
       for (FileStatus child : children) {
         getChildState(
-            child, null, txnList, working, originalDirectories, original, obsolete, bestBase);
+            child, null, txnList, working, originalDirectories, original, obsolete, bestBase, ignoreEmptyFiles);
       }
     }
 
@@ -572,7 +579,7 @@ public class AcidUtils {
 
   private static void getChildState(FileStatus child, HdfsFileStatusWithId childWithId,
       ValidTxnList txnList, List<ParsedDelta> working, List<FileStatus> originalDirectories,
-      List<HdfsFileStatusWithId> original, List<FileStatus> obsolete, TxnBase bestBase) {
+      List<HdfsFileStatusWithId> original, List<FileStatus> obsolete, TxnBase bestBase, boolean ignoreEmptyFiles) {
     Path p = child.getPath();
     String fn = p.getName();
     if (fn.startsWith(BASE_PREFIX) && child.isDir()) {
@@ -600,7 +607,7 @@ public class AcidUtils {
       // it is possible that the cleaner is running and removing these original files,
       // in which case recursing through them could cause us to get an error.
       originalDirectories.add(child);
-    } else {
+    } else if (!ignoreEmptyFiles || child.getLen() != 0){
       original.add(createOriginalObj(childWithId, child));
     }
   }
@@ -611,7 +618,7 @@ public class AcidUtils {
   }
 
   private static class HdfsFileStatusWithoutId implements HdfsFileStatusWithId {
-    private FileStatus fs;
+    private final FileStatus fs;
 
     public HdfsFileStatusWithoutId(FileStatus fs) {
       this.fs = fs;
@@ -681,5 +688,60 @@ public class AcidUtils {
       resultStr = parameters.get(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL.toUpperCase());
     }
     return resultStr != null && resultStr.equalsIgnoreCase("true");
+  }
+
+  public static boolean isTablePropertyTransactional(Configuration conf) {
+    String resultStr = conf.get(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL);
+    if (resultStr == null) {
+      resultStr = conf.get(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL.toUpperCase());
+    }
+    return resultStr != null && resultStr.equalsIgnoreCase("true");
+  }
+
+  public static void setTransactionalTableScan(Map<String, String> parameters, boolean isAcidTable) {
+    parameters.put(ConfVars.HIVE_TRANSACTIONAL_TABLE_SCAN.varname, Boolean.toString(isAcidTable));
+  }
+
+  public static void setTransactionalTableScan(Configuration conf, boolean isAcidTable) {
+    HiveConf.setBoolVar(conf, ConfVars.HIVE_TRANSACTIONAL_TABLE_SCAN, isAcidTable);
+  }
+
+  /** Checks metadata to make sure it's a valid ACID table at metadata level
+   * Three things we will check:
+   * 1. TBLPROPERTIES 'transactional'='true'
+   * 2. The table should be bucketed
+   * 3. InputFormatClass/OutputFormatClass should implement AcidInputFormat/AcidOutputFormat
+   *    Currently OrcInputFormat/OrcOutputFormat is the only implementer
+   * Note, users are responsible for using the correct TxnManager. We do not look at
+   * SessionState.get().getTxnMgr().supportsAcid() here
+   * @param table table
+   * @return true if table is a legit ACID table, false otherwise
+   */
+  public static boolean isAcidTable(Table table) {
+    if (table == null) {
+      return false;
+    }
+    String tableIsTransactional = table.getProperty(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL);
+    if (tableIsTransactional == null) {
+      tableIsTransactional = table.getProperty(hive_metastoreConstants.TABLE_IS_TRANSACTIONAL.toUpperCase());
+    }
+    if (tableIsTransactional == null || !tableIsTransactional.equalsIgnoreCase("true")) {
+      return false;
+    }
+
+    List<String> bucketCols = table.getBucketCols();
+    if (bucketCols == null || bucketCols.isEmpty()) {
+      return false;
+    }
+
+    Class<? extends InputFormat> inputFormatClass = table.getInputFormatClass();
+    Class<? extends OutputFormat> outputFormatClass = table.getOutputFormatClass();
+    if (inputFormatClass == null || outputFormatClass == null ||
+        !AcidInputFormat.class.isAssignableFrom(inputFormatClass) ||
+        !AcidOutputFormat.class.isAssignableFrom(outputFormatClass)) {
+      return false;
+    }
+
+    return true;
   }
 }

@@ -351,7 +351,7 @@ STAGE PLANS:
             alias: events
             Statistics: Num rows: 6 Data size: 79 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: (time is not null and s is not null) (type: boolean)
+              predicate: (s is not null and time is not null) (type: boolean)
               Statistics: Num rows: 6 Data size: 79 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: s (type: string), time (type: int)
@@ -375,8 +375,8 @@ STAGE PLANS:
             compressed: false
             Statistics: Num rows: 6 Data size: 86 Basic stats: COMPLETE Column stats: NONE
             table:
-                input format: org.apache.hadoop.mapred.TextInputFormat
-                output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                 serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0
@@ -566,7 +566,7 @@ STAGE PLANS:
             alias: events
             Statistics: Num rows: 6 Data size: 79 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: (time is not null and s is not null) (type: boolean)
+              predicate: (s is not null and time is not null) (type: boolean)
               Statistics: Num rows: 6 Data size: 79 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: s (type: string), st2 (type: string), n (type: int), time (type: int)
@@ -595,8 +595,8 @@ STAGE PLANS:
               compressed: false
               Statistics: Num rows: 6 Data size: 86 Basic stats: COMPLETE Column stats: NONE
               table:
-                  input format: org.apache.hadoop.mapred.TextInputFormat
-                  output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                  input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                  output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                   serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-0

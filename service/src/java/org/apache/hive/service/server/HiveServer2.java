@@ -46,6 +46,7 @@ import org.apache.hadoop.hive.common.JvmPauseMonitor;
 import org.apache.hadoop.hive.common.LogUtils;
 import org.apache.hadoop.hive.common.LogUtils.LogInitializationException;
 import org.apache.hadoop.hive.common.ServerUtils;
+import org.apache.hadoop.hive.common.cli.CommonCliOptions;
 import org.apache.hadoop.hive.common.metrics.common.MetricsFactory;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars;
@@ -64,6 +65,7 @@ import org.apache.hive.service.cli.CLIService;
 import org.apache.hive.service.cli.thrift.ThriftBinaryCLIService;
 import org.apache.hive.service.cli.thrift.ThriftCLIService;
 import org.apache.hive.service.cli.thrift.ThriftHttpCLIService;
+import org.apache.hive.service.servlet.QueryProfileServlet;
 import org.apache.logging.log4j.util.Strings;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -180,6 +182,7 @@ public class HiveServer2 extends CompositeService {
             builder.setUseSPNEGO(true);
           }
           webServer = builder.build();
+          webServer.addServlet("query_page", "/query_page", QueryProfileServlet.class);
         }
       }
     } catch (IOException ie) {
@@ -509,6 +512,13 @@ public class HiveServer2 extends CompositeService {
       maxAttempts = hiveConf.getLongVar(HiveConf.ConfVars.HIVE_SERVER2_MAX_START_ATTEMPTS);
       HiveServer2 server = null;
       try {
+        // Initialize the pool before we start the server; don't start yet.
+        TezSessionPoolManager sessionPool = null;
+        if (hiveConf.getBoolVar(ConfVars.HIVE_SERVER2_TEZ_INITIALIZE_DEFAULT_SESSIONS)) {
+          sessionPool = TezSessionPoolManager.getInstance();
+          sessionPool.setupPool(hiveConf);
+        }
+
         // Cleanup the scratch dir before starting
         ServerUtils.cleanUpScratchDir(hiveConf);
         server = new HiveServer2();
@@ -528,9 +538,8 @@ public class HiveServer2 extends CompositeService {
         if (hiveConf.getBoolVar(ConfVars.HIVE_SERVER2_SUPPORT_DYNAMIC_SERVICE_DISCOVERY)) {
           server.addServerInstanceToZooKeeper(hiveConf);
         }
-        if (hiveConf.getBoolVar(ConfVars.HIVE_SERVER2_TEZ_INITIALIZE_DEFAULT_SESSIONS)) {
-          TezSessionPoolManager sessionPool = TezSessionPoolManager.getInstance();
-          sessionPool.setupPool(hiveConf);
+
+        if (sessionPool != null) {
           sessionPool.startPool();
         }
 
@@ -686,7 +695,11 @@ public class HiveServer2 extends CompositeService {
         for (String propKey : confProps.stringPropertyNames()) {
           // save logging message for log4j output latter after log4j initialize properly
           debugMessage.append("Setting " + propKey + "=" + confProps.getProperty(propKey) + ";\n");
-          System.setProperty(propKey, confProps.getProperty(propKey));
+          if (propKey.equalsIgnoreCase("hive.root.logger")) {
+            CommonCliOptions.splitAndSetLogger(propKey, confProps);
+          } else {
+            System.setProperty(propKey, confProps.getProperty(propKey));
+          }
         }
 
         // Process --help

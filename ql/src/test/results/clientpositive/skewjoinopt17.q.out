@@ -120,8 +120,8 @@ STAGE PLANS:
                 compressed: false
                 Statistics: Num rows: 2 Data size: 66 Basic stats: COMPLETE Column stats: NONE
                 table:
-                    input format: org.apache.hadoop.mapred.TextInputFormat
-                    output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                    input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                    output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                     serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
           TableScan
             Union
@@ -130,8 +130,8 @@ STAGE PLANS:
                 compressed: false
                 Statistics: Num rows: 2 Data size: 66 Basic stats: COMPLETE Column stats: NONE
                 table:
-                    input format: org.apache.hadoop.mapred.TextInputFormat
-                    output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                    input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                    output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                     serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-4
@@ -286,7 +286,7 @@ STAGE PLANS:
             alias: a
             Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: ((val is not null and key is not null) and (((key = '2') and (val = '12')) or (key = '2'))) (type: boolean)
+              predicate: ((key is not null and val is not null) and (((key = '2') and (val = '12')) or (key = '2'))) (type: boolean)
               Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: key (type: string), val (type: string)
@@ -301,7 +301,7 @@ STAGE PLANS:
             alias: b
             Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: ((val is not null and key is not null) and (((key = '2') and (val = '12')) or (key = '2'))) (type: boolean)
+              predicate: ((key is not null and val is not null) and (((key = '2') and (val = '12')) or (key = '2'))) (type: boolean)
               Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: key (type: string), val (type: string)
@@ -338,8 +338,8 @@ STAGE PLANS:
                 compressed: false
                 Statistics: Num rows: 2 Data size: 66 Basic stats: COMPLETE Column stats: NONE
                 table:
-                    input format: org.apache.hadoop.mapred.TextInputFormat
-                    output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                    input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                    output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                     serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
           TableScan
             Union
@@ -348,8 +348,8 @@ STAGE PLANS:
                 compressed: false
                 Statistics: Num rows: 2 Data size: 66 Basic stats: COMPLETE Column stats: NONE
                 table:
-                    input format: org.apache.hadoop.mapred.TextInputFormat
-                    output format: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+                    input format: org.apache.hadoop.mapred.SequenceFileInputFormat
+                    output format: org.apache.hadoop.hive.ql.io.HiveSequenceFileOutputFormat
                     serde: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
 
   Stage: Stage-4
@@ -359,7 +359,7 @@ STAGE PLANS:
             alias: a
             Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: ((val is not null and key is not null) and (not (((key = '2') and (val = '12')) or (key = '2')))) (type: boolean)
+              predicate: ((key is not null and val is not null) and (not (((key = '2') and (val = '12')) or (key = '2')))) (type: boolean)
               Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: key (type: string), val (type: string)
@@ -374,7 +374,7 @@ STAGE PLANS:
             alias: b
             Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
             Filter Operator
-              predicate: ((val is not null and key is not null) and (not (((key = '2') and (val = '12')) or (key = '2')))) (type: boolean)
+              predicate: ((key is not null and val is not null) and (not (((key = '2') and (val = '12')) or (key = '2')))) (type: boolean)
               Statistics: Num rows: 1 Data size: 30 Basic stats: COMPLETE Column stats: NONE
               Select Operator
                 expressions: key (type: string), val (type: string)

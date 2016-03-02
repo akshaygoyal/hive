@@ -37,13 +37,15 @@ import org.apache.hadoop.hive.metastore.api.ShowCompactResponseElement;
 import org.apache.hadoop.hive.metastore.api.StringColumnStatsData;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.txn.CompactionInfo;
-import org.apache.hadoop.hive.metastore.txn.CompactionTxnHandler;
 import org.apache.hadoop.hive.metastore.txn.TxnDbUtil;
+import org.apache.hadoop.hive.metastore.txn.TxnStore;
+import org.apache.hadoop.hive.metastore.txn.TxnUtils;
 import org.apache.hadoop.hive.ql.CommandNeedRetryException;
 import org.apache.hadoop.hive.ql.Driver;
 import org.apache.hadoop.hive.ql.io.AcidInputFormat;
 import org.apache.hadoop.hive.ql.io.AcidUtils;
 import org.apache.hadoop.hive.ql.io.HiveInputFormat;
+import org.apache.hadoop.hive.ql.io.IOConstants;
 import org.apache.hadoop.hive.ql.io.RecordIdentifier;
 import org.apache.hadoop.hive.ql.io.orc.OrcInputFormat;
 import org.apache.hadoop.hive.ql.io.orc.OrcStruct;
@@ -202,7 +204,7 @@ public class TestCompactor {
     initiator.init(stop, new AtomicBoolean());
     initiator.run();
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     ShowCompactResponse rsp = txnHandler.showCompact(new ShowCompactRequest());
     List<ShowCompactResponseElement> compacts = rsp.getCompacts();
     Assert.assertEquals(4, compacts.size());
@@ -305,7 +307,7 @@ public class TestCompactor {
     initiator.init(stop, new AtomicBoolean());
     initiator.run();
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     ShowCompactResponse rsp = txnHandler.showCompact(new ShowCompactRequest());
     List<ShowCompactResponseElement> compacts = rsp.getCompacts();
     Assert.assertEquals(4, compacts.size());
@@ -363,8 +365,7 @@ public class TestCompactor {
     executeStatementOnDriver("CREATE EXTERNAL TABLE " + tblNameStg + "(a INT, b STRING)" +
       " ROW FORMAT DELIMITED FIELDS TERMINATED BY '\\t' LINES TERMINATED BY '\\n'" +
       " STORED AS TEXTFILE" +
-      " LOCATION '" + stagingFolder.newFolder().toURI().getPath() + "'" +
-      " TBLPROPERTIES ('transactional'='true')", driver);
+      " LOCATION '" + stagingFolder.newFolder().toURI().getPath() + "'", driver);
 
     executeStatementOnDriver("load data local inpath '" + BASIC_FILE_NAME +
       "' overwrite into table " + tblNameStg, driver);
@@ -379,7 +380,7 @@ public class TestCompactor {
     execSelectAndDumpData("select * from " + tblName, driver, "Dumping data for " +
       tblName + " after load:");
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     CompactionInfo ci = new CompactionInfo("default", tblName, "bkt=0", CompactionType.MAJOR);
     LOG.debug("List of stats columns before analyze Part1: " + txnHandler.findColumnsWithStats(ci));
     Worker.StatsUpdater su = Worker.StatsUpdater.init(ci, colNames, conf,
@@ -514,7 +515,7 @@ public class TestCompactor {
     initiator.init(stop, new AtomicBoolean());
     initiator.run();
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     ShowCompactResponse rsp = txnHandler.showCompact(new ShowCompactRequest());
     List<ShowCompactResponseElement> compacts = rsp.getCompacts();
     Assert.assertEquals(2, compacts.size());
@@ -554,7 +555,7 @@ public class TestCompactor {
     initiator.init(stop, new AtomicBoolean());
     initiator.run();
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     ShowCompactResponse rsp = txnHandler.showCompact(new ShowCompactRequest());
     List<ShowCompactResponseElement> compacts = rsp.getCompacts();
     Assert.assertEquals(2, compacts.size());
@@ -596,7 +597,7 @@ public class TestCompactor {
     initiator.init(stop, new AtomicBoolean());
     initiator.run();
 
-    CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+    TxnStore txnHandler = TxnUtils.getTxnStore(conf);
     ShowCompactResponse rsp = txnHandler.showCompact(new ShowCompactRequest());
     List<ShowCompactResponseElement> compacts = rsp.getCompacts();
     Assert.assertEquals(1, compacts.size());
@@ -636,7 +637,7 @@ public class TestCompactor {
       writeBatch(connection, writer, true);
 
       // Now, compact
-      CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+      TxnStore txnHandler = TxnUtils.getTxnStore(conf);
       txnHandler.compact(new CompactionRequest(dbName, tblName, CompactionType.MINOR));
       Worker t = new Worker();
       t.setThreadId((int) t.getId());
@@ -698,7 +699,7 @@ public class TestCompactor {
       writeBatch(connection, writer, true);
 
       // Now, compact
-      CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+      TxnStore txnHandler = TxnUtils.getTxnStore(conf);
       txnHandler.compact(new CompactionRequest(dbName, tblName, CompactionType.MAJOR));
       Worker t = new Worker();
       t.setThreadId((int) t.getId());
@@ -754,7 +755,7 @@ public class TestCompactor {
       txnBatch.abort();
 
       // Now, compact
-      CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+      TxnStore txnHandler = TxnUtils.getTxnStore(conf);
       txnHandler.compact(new CompactionRequest(dbName, tblName, CompactionType.MINOR));
       Worker t = new Worker();
       t.setThreadId((int) t.getId());
@@ -820,7 +821,7 @@ public class TestCompactor {
 
 
       // Now, compact
-      CompactionTxnHandler txnHandler = new CompactionTxnHandler(conf);
+      TxnStore txnHandler = TxnUtils.getTxnStore(conf);
       txnHandler.compact(new CompactionRequest(dbName, tblName, CompactionType.MAJOR));
       Worker t = new Worker();
       t.setThreadId((int) t.getId());
@@ -910,8 +911,9 @@ public class TestCompactor {
     OrcInputFormat aif = new OrcInputFormat();
 
     Configuration conf = new Configuration();
-    conf.set("columns", columnNamesProperty);
-    conf.set("columns.types", columnTypesProperty);
+    conf.set(IOConstants.SCHEMA_EVOLUTION_COLUMNS, columnNamesProperty);
+    conf.set(IOConstants.SCHEMA_EVOLUTION_COLUMNS_TYPES, columnTypesProperty);
+    HiveConf.setBoolVar(conf, HiveConf.ConfVars.HIVE_TRANSACTIONAL_TABLE_SCAN, true);
     AcidInputFormat.RawReader<OrcStruct> reader =
         aif.getRawReader(conf, false, bucket, txnList, base, deltas);
     RecordIdentifier identifier = reader.createKey();

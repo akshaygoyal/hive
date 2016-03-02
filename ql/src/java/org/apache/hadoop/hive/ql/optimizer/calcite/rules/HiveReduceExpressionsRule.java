@@ -16,6 +16,15 @@
  */
 package org.apache.hadoop.hive.ql.optimizer.calcite.rules;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptRule;
@@ -25,6 +34,7 @@ import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.rules.ValuesReduceRule;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
@@ -50,21 +60,13 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Stacks;
 import org.apache.calcite.util.Util;
 import org.apache.hadoop.hive.ql.optimizer.calcite.HiveRelFactories;
+import org.apache.hadoop.hive.ql.optimizer.calcite.HiveRexUtil;
 import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveFilter;
-import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveProject;
 import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveJoin;
+import org.apache.hadoop.hive.ql.optimizer.calcite.reloperators.HiveProject;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Collection of planner rules that apply various simplifying transformations on
@@ -123,91 +125,37 @@ public abstract class HiveReduceExpressionsRule extends RelOptRule {
 
     @Override public void onMatch(RelOptRuleCall call) {
       final Filter filter = call.rel(0);
-      final List<RexNode> expList =
-          Lists.newArrayList(filter.getCondition());
-      RexNode newConditionExp;
-      boolean reduced;
+      final RexBuilder rexBuilder = filter.getCluster().getRexBuilder();
+
+      RexNode newConditionExp = HiveRexUtil.simplify(rexBuilder, filter.getCondition());
+      final List<RexNode> expList = Lists.newArrayList(newConditionExp);
+      boolean reduced = false;
       final RelOptPredicateList predicates =
-          RelMetadataQuery.getPulledUpPredicates(filter.getInput());
+          RelMetadataQuery.instance().getPulledUpPredicates(filter.getInput());
       if (reduceExpressions(filter, expList, predicates)) {
         assert expList.size() == 1;
         newConditionExp = expList.get(0);
         reduced = true;
-      } else {
-        // No reduction, but let's still test the original
-        // predicate to see if it was already a constant,
-        // in which case we don't need any runtime decision
-        // about filtering.
-        newConditionExp = filter.getCondition();
-        reduced = false;
       }
+
+      // Even if no reduction, let's still test the original
+      // predicate to see if it was already a constant,
+      // in which case we don't need any runtime decision
+      // about filtering.
+      // TODO: support LogicalValues
       if (newConditionExp.isAlwaysTrue()) {
         call.transformTo(
             filter.getInput());
-      }
-      // TODO: support LogicalValues
-      else if (newConditionExp instanceof RexLiteral
-          || RexUtil.isNullLiteral(newConditionExp, true)) {
-        // call.transformTo(call.builder().values(filter.getRowType()).build());
-        return;
-      }
-      else if (reduced) {
+      } else if (reduced
+              || !newConditionExp.toString().equals(filter.getCondition().toString())) {
         call.transformTo(call.builder().
-            push(filter.getInput()).filter(expList.get(0)).build());
+            push(filter.getInput()).filter(newConditionExp).build());
       } else {
-        if (newConditionExp instanceof RexCall) {
-          RexCall rexCall = (RexCall) newConditionExp;
-          boolean reverse =
-              rexCall.getOperator()
-                  == SqlStdOperatorTable.NOT;
-          if (reverse) {
-            rexCall = (RexCall) rexCall.getOperands().get(0);
-          }
-          reduceNotNullableFilter(call, filter, rexCall, reverse);
-        }
         return;
       }
 
       // New plan is absolutely better than old plan.
       call.getPlanner().setImportance(filter, 0.0);
-    }
-
-    private void reduceNotNullableFilter(
-        RelOptRuleCall call,
-        Filter filter,
-        RexCall rexCall,
-        boolean reverse) {
-      // If the expression is a IS [NOT] NULL on a non-nullable
-      // column, then we can either remove the filter or replace
-      // it with an Empty.
-      boolean alwaysTrue;
-      switch (rexCall.getKind()) {
-      case IS_NULL:
-      case IS_UNKNOWN:
-        alwaysTrue = false;
-        break;
-      case IS_NOT_NULL:
-        alwaysTrue = true;
-        break;
-      default:
-        return;
-      }
-      if (reverse) {
-        alwaysTrue = !alwaysTrue;
-      }
-      RexNode operand = rexCall.getOperands().get(0);
-      if (operand instanceof RexInputRef) {
-        RexInputRef inputRef = (RexInputRef) operand;
-        if (!inputRef.getType().isNullable()) {
-          if (alwaysTrue) {
-            call.transformTo(filter.getInput());
-          } else {
-            // TODO: support LogicalValues
-            // call.transformTo(call.builder().values(filter.getRowType()).build());
-            return;
-          }
-        }
-      }
     }
   }
 
@@ -242,7 +190,7 @@ public abstract class HiveReduceExpressionsRule extends RelOptRule {
         registry.registerVisited(this, project);
       }
       final RelOptPredicateList predicates =
-          RelMetadataQuery.getPulledUpPredicates(project.getInput());
+          RelMetadataQuery.instance().getPulledUpPredicates(project.getInput());
       final List<RexNode> expList =
           Lists.newArrayList(project.getProjects());
       if (reduceExpressions(project, expList, predicates)) {
@@ -273,10 +221,11 @@ public abstract class HiveReduceExpressionsRule extends RelOptRule {
       final HiveJoin join = call.rel(0);
       final List<RexNode> expList = Lists.newArrayList(join.getCondition());
       final int fieldCount = join.getLeft().getRowType().getFieldCount();
+      RelMetadataQuery mq = RelMetadataQuery.instance();
       final RelOptPredicateList leftPredicates =
-          RelMetadataQuery.getPulledUpPredicates(join.getLeft());
+          mq.getPulledUpPredicates(join.getLeft());
       final RelOptPredicateList rightPredicates =
-          RelMetadataQuery.getPulledUpPredicates(join.getRight());
+          mq.getPulledUpPredicates(join.getRight());
       final RelOptPredicateList predicates =
           leftPredicates.union(rightPredicates.shift(fieldCount));
       if (!reduceExpressions(join, expList, predicates)) {
@@ -627,7 +576,7 @@ public abstract class HiveReduceExpressionsRule extends RelOptRule {
       }
       node = super.visitCall(call);
       if (node != call) {
-        node = RexUtil.simplify(rexBuilder, node);
+        node = HiveRexUtil.simplify(rexBuilder, node);
       }
       return node;
     }

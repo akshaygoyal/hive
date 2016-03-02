@@ -51,7 +51,7 @@ shift
 JAVA=$JAVA_HOME/bin/java
 LOG_LEVEL_DEFAULT="INFO"
 LOGGER_DEFAULT="console"
-JAVA_OPTS_BASE="-server -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps"
+JAVA_OPTS_BASE="-server -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime"
 
 # CLASSPATH initially contains $HADOOP_CONF_DIR & $YARN_CONF_DIR
 if [ ! -d "$HADOOP_CONF_DIR" ]; then
@@ -82,7 +82,7 @@ if [ ! -n "${LLAP_DAEMON_LOG_LEVEL}" ]; then
   LLAP_DAEMON_LOG_LEVEL=${LOG_LEVEL_DEFAULT}
 fi
 
-CLASSPATH=${LLAP_DAEMON_CONF_DIR}:${LLAP_DAEMON_HOME}/lib/*:`${HADOOP_PREFIX}/bin/hadoop classpath`:.
+CLASSPATH=${LLAP_DAEMON_CONF_DIR}:${LLAP_DAEMON_HOME}/lib/*:${LLAP_DAEMON_HOME}/lib/tez/*:`${HADOOP_PREFIX}/bin/hadoop classpath`:.
 
 if [ -n "LLAP_DAEMON_USER_CLASSPATH" ]; then
   CLASSPATH=${CLASSPATH}:${LLAP_DAEMON_USER_CLASSPATH}

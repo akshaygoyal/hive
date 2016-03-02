@@ -1480,7 +1480,7 @@ public final class Utilities {
 
         taskIDToFile = removeTempOrDuplicateFiles(items, fs);
         // if the table is bucketed and enforce bucketing, we should check and generate all buckets
-        if (dpCtx.getNumBuckets() > 0 && taskIDToFile != null) {
+        if (dpCtx.getNumBuckets() > 0 && taskIDToFile != null && !"tez".equalsIgnoreCase(hconf.get(ConfVars.HIVE_EXECUTION_ENGINE.varname))) {
           // refresh the file list
           items = fs.listStatus(parts[i].getPath());
           // get the missing buckets and generate empty buckets
@@ -1500,7 +1500,7 @@ public final class Utilities {
       FileStatus[] items = fs.listStatus(path);
       taskIDToFile = removeTempOrDuplicateFiles(items, fs);
       if(taskIDToFile != null && taskIDToFile.size() > 0 && conf != null && conf.getTable() != null
-          && (conf.getTable().getNumBuckets() > taskIDToFile.size())) {
+          && (conf.getTable().getNumBuckets() > taskIDToFile.size()) && !"tez".equalsIgnoreCase(hconf.get(ConfVars.HIVE_EXECUTION_ENGINE.varname))) {
           // get the missing buckets and generate empty buckets for non-dynamic partition
         String taskID1 = taskIDToFile.keySet().iterator().next();
         Path bucketPath = taskIDToFile.values().iterator().next().getPath();
@@ -2917,10 +2917,7 @@ public final class Utilities {
   public static List<Path> getInputPathsTez(JobConf job, MapWork work) throws Exception {
     String scratchDir = job.get(DagUtils.TEZ_TMP_DIR_KEY);
 
-    // we usually don't want to create dummy files for tez, however the metadata only
-    // optimization relies on it.
-    List<Path> paths = getInputPaths(job, work, new Path(scratchDir), null,
-        !work.isUseOneNullRowInputFormat());
+    List<Path> paths = getInputPaths(job, work, new Path(scratchDir), null, true);
 
     return paths;
   }
@@ -3160,12 +3157,18 @@ public final class Utilities {
 
     Map<String, ArrayList<String>> pa = mWork.getPathToAliases();
     if (pa != null) {
+      // common case: 1 table scan per map-work
+      // rare case: smb joins
+      HashSet<String> aliases = new HashSet<String>(1);
       List<Operator<? extends OperatorDesc>> ops =
-        new ArrayList<Operator<? extends OperatorDesc>>();
+          new ArrayList<Operator<? extends OperatorDesc>>();
       for (List<String> ls : pa.values()) {
         for (String a : ls) {
-          ops.add(mWork.getAliasToWork().get(a));
+          aliases.add(a);
         }
+      }
+      for (String a : aliases) {
+        ops.add(mWork.getAliasToWork().get(a));
       }
       createTmpDirs(conf, ops);
     }
